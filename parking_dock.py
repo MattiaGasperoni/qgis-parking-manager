@@ -2,14 +2,11 @@
 """
 parking_dock.py
 ---------------
-QgsDockWidget principale del plugin Analisi Parcheggi.
-
-Contiene tutta la logica di:
-  - Interfaccia grafica (costruita programmaticamente con PyQt5)
+Finestra del plugin, contiene:
   - Caricamento file GeoJSON e creazione dei layer
-  - Applicazione simbologia e etichette
-  - Selezione rettangolare interattiva sulla mappa
-  - Analisi spaziale e visualizzazione dei risultati
+  - Legenda 
+  - Funzione per la selezione rettangolare interattiva sulla mappa
+  - Grafico per l'analisi e la visualizzazione dei risultati
 """
 
 import os
@@ -50,8 +47,7 @@ from .layer_loader import load_geojson_to_layers
 # Stile CSS comune per il pannello
 # ---------------------------------------------------------------------------
 _DOCK_STYLE = """
-/* Sfondo bianco forzato su tutto il pannello per neutralizzare
-   il tema scuro di QGIS — così tutti i colori sono prevedibili */
+/* Sfondo bianco forzato su tutto il pannello sennò con il tema scuro di QGIS non si vede bene */
 QWidget {
     background-color: #f5f5f5;
     color: #1a1a1a;
@@ -93,12 +89,12 @@ QLabel {
 /* Bottoni base */
 QPushButton {
     border: 1px solid #aaa;
-    border-radius: 4px;
+    border-radius: 6px;
     padding: 6px 12px;
     background-color: #e8e8e8;
     color: #1a1a1a;
     font-size: 11px;
-    min-height: 28px;
+    min-height: 23px;
 }
 QPushButton:hover   { background-color: #d0e4f5; border-color: #3498db; color: #1a1a1a; }
 QPushButton:pressed { background-color: #b8d4ea; color: #1a1a1a; }
@@ -260,7 +256,7 @@ class ParcheggiDock(QgsDockWidget):
         main_layout.setSpacing(10)
 
         # ---------- [1] Caricamento ----------
-        grp_load = QGroupBox("📂  Caricamento File GeoJSON")
+        grp_load = QGroupBox("Caricamento File GeoJSON")
         vb_load = QVBoxLayout(grp_load)
 
         # Etichetta percorso file
@@ -297,14 +293,14 @@ class ParcheggiDock(QgsDockWidget):
         main_layout.addWidget(grp_load)
 
         # ---------- [2] Informazioni Layer ----------
-        grp_info = QGroupBox("ℹ️  Informazioni Layer")
-        vb_info = QVBoxLayout(grp_info)
+        grp_info = QGroupBox("Informazioni sui Parcheggi Caricati")
+        vb_info  = QVBoxLayout(grp_info)
 
-        self.lbl_poly_count = QLabel("Poligoni caricati:  —")
-        self.lbl_pts_count = QLabel("Punti caricati:       —")
-        self.lbl_fee_yes = QLabel("Fee = yes (rosso):   —")
-        self.lbl_fee_no = QLabel("Fee = no (verde):     —")
-        self.lbl_fee_cond = QLabel("Fee condizionale:     —")
+        self.lbl_poly_count = QLabel("Parcheggi Poligonali caricati: —")
+        self.lbl_pts_count  = QLabel("Punti di Parcheggio caricati: —")
+        self.lbl_fee_yes    = QLabel("Parcheggi a pagamento: —")
+        self.lbl_fee_no     = QLabel("Parcheggi gratuiti: —")
+        self.lbl_fee_cond   = QLabel("Parcheggi con condizioni: —")
 
         for lbl in (
             self.lbl_poly_count,
@@ -322,12 +318,12 @@ class ParcheggiDock(QgsDockWidget):
         main_layout.addWidget(grp_info)
 
         # ---------- [3] Selezione Spaziale ----------
-        grp_sel = QGroupBox("🔲  Selezione Spaziale")
+        grp_sel = QGroupBox("Selezione Spaziale")
         vb_sel = QVBoxLayout(grp_sel)
 
         lbl_hint = QLabel(
             "Clicca il bottone, poi disegna un rettangolo\n"
-            "sulla mappa tenendo premuto il tasto sinistro."
+            "sulla mappa tenendo premuto."
         )
         lbl_hint.setStyleSheet(
             "font-size: 10px; color: #444444; padding: 2px; "
@@ -370,7 +366,7 @@ class ParcheggiDock(QgsDockWidget):
         cards_layout = QHBoxLayout()
 
         self.card_count = _ResultCard("Parcheggi", "🅿")
-        self.card_capacity = _ResultCard("Posti totali", "🚗")
+        self.card_capacity = _ResultCard("Posti auto", "🚗")
 
         cards_layout.addWidget(self.card_count)
         cards_layout.addWidget(self.card_capacity)
@@ -388,7 +384,7 @@ class ParcheggiDock(QgsDockWidget):
         main_layout.addWidget(grp_results)
 
         # ---------- [5] Log / Stato ----------
-        grp_log = QGroupBox("📋  Log")
+        grp_log = QGroupBox("Log del Plugin")
         vb_log = QVBoxLayout(grp_log)
 
         self.lbl_log = QLabel("Pronto.")
@@ -515,16 +511,16 @@ class ParcheggiDock(QgsDockWidget):
             else:
                 fee_cond += 1
 
-        self.lbl_poly_count.setText(f"Poligoni caricati:  <b>{n_poly}</b>")
-        self.lbl_pts_count.setText(f"Punti caricati:       <b>{n_pts}</b>")
+        self.lbl_poly_count.setText(f"Parcheggi Poligonali caricati:  <b>{n_poly}</b>")
+        self.lbl_pts_count.setText(f"Punti di Parcheggio caricati: <b>{n_pts}</b>")
         self.lbl_fee_yes.setText(
-            f"Fee = yes <span style='color:red'>■</span>:  <b>{fee_yes}</b>"
+            f"Parcheggi a pagamento <span style='color:red'>■</span>:  <b>{fee_yes}</b>"
         )
         self.lbl_fee_no.setText(
-            f"Fee = no <span style='color:green'>■</span>:   <b>{fee_no}</b>"
+            f"Parcheggi gratuiti <span style='color:green'>■</span>:   <b>{fee_no}</b>"
         )
         self.lbl_fee_cond.setText(
-            f"Fee condizionale <span style='color:orange'>■</span>: <b>{fee_cond}</b>"
+            f"Parcheggi con condizioni <span style='color:orange'>■</span>: <b>{fee_cond}</b>"
         )
 
         for lbl in (
@@ -558,7 +554,7 @@ class ParcheggiDock(QgsDockWidget):
         self.btn_select.setEnabled(False)
         self.btn_clear.setEnabled(True)
         self.lbl_tool_status.setText(
-            "🖱️  Disegna il rettangolo di selezione sulla mappa…"
+            "Disegna il rettangolo per la selezione dei parcheggi sulla mappa…"
         )
         self.lbl_tool_status.setStyleSheet(
             "color: #27ae60; font-size: 10px; font-weight: bold;"
@@ -724,21 +720,21 @@ class ParcheggiDock(QgsDockWidget):
             )
         if cap_missing:
             detail_parts.append(
-                f"ℹ️  {cap_missing} parcheggi senza dato 'capacity'"
+                f"\nAttenzione! Ci sono {cap_missing} parcheggi che non specificano la capacità e non sono inclusi nel totale dei posti auto."
             )
 
-        self.lbl_detail.setText("\n".join(detail_parts))
+        self.lbl_detail.setText("\n\n".join(detail_parts))
 
-        self.lbl_tool_status.setText("✅  Analisi completata.")
+        self.lbl_tool_status.setText("✅  Analisi dei parcheggi completata")
         self.lbl_tool_status.setStyleSheet(
             "color: #1e8449; font-size: 10px; font-weight: bold;"
         )
         self.btn_select.setEnabled(True)
 
         self._log(
-            f"📌 Risultati selezione:\n"
+            f"Risultati selezione:\n"
             f"   • Parcheggi nell'area: {count}\n"
-            f"   • Posti totali: {capacity}\n"
+            f"   • Posti auto totali: {capacity}\n"
             f"   • Pagamento: {fee_breakdown['yes']} | "
             f"Gratuiti: {fee_breakdown['no']} | "
             f"Condizionali: {fee_breakdown['conditional']}"

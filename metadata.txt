@@ -6,10 +6,10 @@ version=1.0.0
 author=Gasperoni Mattia
 email=mattiagasperoni02@gmail.com
 about=Plugin didattico sviluppato per esame universitario. Funzionalità principali: caricamento GeoJSON con separazione geometrie, simbologia categorizzata (fee: yes=rosso / no=verde / condizionale=arancione), etichette automatiche sul campo 'name', selezione rettangolare interattiva sulla mappa con conteggio parcheggi e somma della capacità totale.
-tracker=https://github.com/studente/parcheggi-plugin/issues
-repository=https://github.com/studente/parcheggi-plugin
+tracker=https://github.com/MattiaGasperoni/qgis-parking-manager/issues
+repository=https://github.com/MattiaGasperoni/qgis-parking-manager
 tags=parcheggi, parking, geojson, analisi spaziale, selezione
-homepage=https://github.com/studente/parcheggi-plugin
+homepage=https://github.com/MattiaGasperoni/qgis-parking-manager
 category=Vector
 icon=icon.png
 experimental=False
