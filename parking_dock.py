@@ -5,6 +5,7 @@ parking_dock.py
 Finestra del plugin, contiene:
   - Caricamento file GeoJSON e creazione dei layer
   - Legenda 
+  - Strumenti per l'aggiunta e la rimozione di parcheggi
   - Funzione per la selezione rettangolare interattiva sulla mappa
   - Grafico per l'analisi e la visualizzazione dei risultati
 """
@@ -37,14 +38,16 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsFeatureRequest,
+    QgsVectorFileWriter, 
 )
 
 from .map_tool_extent import RectangleMapTool
 from .layer_loader import load_geojson_to_layers
+from .add_remove_tools import AddParkingMapTool, RemoveParkingMapTool
 
 
 # ---------------------------------------------------------------------------
-# Stile CSS comune per il pannello
+# Stile CSS per il pannello principale 
 # ---------------------------------------------------------------------------
 _DOCK_STYLE = """
 /* Sfondo bianco forzato su tutto il pannello sennò con il tema scuro di QGIS non si vede bene */
@@ -204,21 +207,12 @@ class _ResultCard(QFrame):
 
 class ParcheggiDock(QgsDockWidget):
     """
-    Dock widget principale del plugin Analisi Parcheggi.
-
-    Pannello ancorato lateralmente con:
-      ┌─────────────────────────────────┐
-      │  [1] Caricamento File GeoJSON   │
-      │  [2] Informazioni Layer         │
-      │  [3] Selezione Spaziale         │
-      │  [4] Risultati dell'Analisi     │
-      │  [5] Log / Stato                │
-      └─────────────────────────────────┘
+    Pannello principale del plugin
     """
 
     def __init__(self, iface):
-        super().__init__("Analisi Parcheggi", iface.mainWindow())
-        self.iface = iface
+        super().__init__("QGIS Parking Manager", iface.mainWindow())
+        self.iface  = iface
         self.canvas = iface.mapCanvas()
 
         # Layer attivi
@@ -227,8 +221,12 @@ class ParcheggiDock(QgsDockWidget):
 
         # Map tool per la selezione rettangolare
         self._map_tool: Optional[RectangleMapTool] = None
-        # Map tool precedente (ripristinato dopo la selezione)
+        # Map tool precedente (ripristinato dopo la selezione o la modifica)
         self._prev_map_tool = None
+        
+        # Map tool per aggiunta/rimozione parcheggi
+        self._add_tool:    Optional[AddParkingMapTool] = None
+        self._remove_tool: Optional[RemoveParkingMapTool] = None
 
         # Imposta il contenuto del dock
         self._build_ui()
@@ -240,8 +238,6 @@ class ParcheggiDock(QgsDockWidget):
     # ======================================================================
 
     def _build_ui(self):
-        """Crea e assembla tutti i widget dell'interfaccia."""
-
         # Widget radice + scroll area
         root_widget = QWidget()
         root_widget.setStyleSheet(_DOCK_STYLE)
@@ -255,7 +251,7 @@ class ParcheggiDock(QgsDockWidget):
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(10)
 
-        # ---------- [1] Caricamento ----------
+        # ---------- [Caricamento File GeoJSON] ----------
         grp_load = QGroupBox("Caricamento File GeoJSON")
         vb_load = QVBoxLayout(grp_load)
 
@@ -292,7 +288,7 @@ class ParcheggiDock(QgsDockWidget):
 
         main_layout.addWidget(grp_load)
 
-        # ---------- [2] Informazioni Layer ----------
+        # ---------- Informazioni Parcheggi Caricati ----------
         grp_info = QGroupBox("Informazioni sui Parcheggi Caricati")
         vb_info  = QVBoxLayout(grp_info)
 
@@ -316,14 +312,72 @@ class ParcheggiDock(QgsDockWidget):
             vb_info.addWidget(lbl)
 
         main_layout.addWidget(grp_info)
+        
+        # ---------- Scheda per la Modifica dei Parcheggi ----------
+        grp_edit = QGroupBox("Modifica Parcheggi")
+        vb_edit = QVBoxLayout(grp_edit)
 
-        # ---------- [3] Selezione Spaziale ----------
+        lbl_edit_hint = QLabel(
+            "Clicca sui bottoni per aggiungere o rimuovere un parcheggio"
+        )
+        lbl_edit_hint.setStyleSheet(
+            "font-size: 10px; color: #444444; padding: 2px; "
+            "background-color: transparent;"
+        )
+        lbl_edit_hint.setWordWrap(True)
+        vb_edit.addWidget(lbl_edit_hint)
+
+        hb_edit = QHBoxLayout()
+
+        self.btn_add = QPushButton("Aggiungi")
+        self.btn_add.setObjectName("btn_add")
+        self.btn_add.setEnabled(False)
+        self.btn_add.setToolTip(
+            "Clicca sulla mappa per aggiungere un nuovo punto di parcheggio"
+        )
+        self.btn_add.setStyleSheet(
+            "QPushButton { background-color: #1a5276; color: white; "
+            "border-color: #154360; font-weight: bold; "
+            "border-radius: 6px; padding: 6px 12px; min-height: 23px; }"
+            "QPushButton:hover { background-color: #154360; color: white; }"
+            "QPushButton:disabled { background-color: #aab7c4; color: #eee; border-color: #ccc; }"
+        )
+        self.btn_add.clicked.connect(self._on_activate_add)
+
+        self.btn_remove = QPushButton("Rimuovi")
+        self.btn_remove.setObjectName("btn_remove")
+        self.btn_remove.setEnabled(False)
+        self.btn_remove.setToolTip(
+            "Clicca su un parcheggio esistente per rimuoverlo"
+        )
+        self.btn_remove.setStyleSheet(
+            "QPushButton { background-color: #784212; color: white; "
+            "border-color: #6e2c0e; font-weight: bold; "
+            "border-radius: 6px; padding: 6px 12px; min-height: 23px; }"
+            "QPushButton:hover { background-color: #6e2c0e; color: white; }"
+            "QPushButton:disabled { background-color: #c4a882; color: #eee; border-color: #ccc; }"
+        )
+        self.btn_remove.clicked.connect(self._on_activate_remove)
+
+        hb_edit.addWidget(self.btn_add)
+        hb_edit.addWidget(self.btn_remove)
+        vb_edit.addLayout(hb_edit)
+
+        # Stato strumento modifica
+        self.lbl_edit_status = QLabel("")
+        self.lbl_edit_status.setObjectName("lbl_status")
+        self.lbl_edit_status.setAlignment(Qt.AlignCenter)
+        self.lbl_edit_status.setWordWrap(True)
+        vb_edit.addWidget(self.lbl_edit_status)
+
+        main_layout.addWidget(grp_edit)
+
+        # ---------- Tool per la Selezione Spaziale ----------
         grp_sel = QGroupBox("Selezione Spaziale")
         vb_sel = QVBoxLayout(grp_sel)
 
         lbl_hint = QLabel(
-            "Clicca il bottone, poi disegna un rettangolo\n"
-            "sulla mappa tenendo premuto."
+            "Clicca il bottone, poi disegna un rettangolo sulla mappa tenendo premuto."
         )
         lbl_hint.setStyleSheet(
             "font-size: 10px; color: #444444; padding: 2px; "
@@ -338,6 +392,13 @@ class ParcheggiDock(QgsDockWidget):
         self.btn_select.setEnabled(False)
         self.btn_select.setToolTip(
             "Attiva lo strumento di selezione rettangolare sulla mappa"
+        )
+        self.btn_select.setStyleSheet(
+            "QPushButton { background-color: #27ae60; color: white; "
+            "border-color: #1e8449; font-weight: bold; "
+            "border-radius: 6px; padding: 6px 12px; min-height: 23px; }"
+            "QPushButton:hover { background-color: #1e8449; color: white; }"
+            "QPushButton:disabled { background-color: #aab7c4; color: #eee; border-color: #ccc; }"
         )
         self.btn_select.clicked.connect(self._on_activate_selection)
 
@@ -359,7 +420,8 @@ class ParcheggiDock(QgsDockWidget):
 
         main_layout.addWidget(grp_sel)
 
-        # ---------- [4] Risultati ----------
+
+        # ---------- [5] Risultati ----------
         grp_results = QGroupBox("📊  Risultati Analisi")
         vb_results = QVBoxLayout(grp_results)
 
@@ -381,13 +443,35 @@ class ParcheggiDock(QgsDockWidget):
         )
         vb_results.addWidget(self.lbl_detail)
 
+
+        # Separatore + bottone salvataggio
+        line_save = QFrame()
+        line_save.setFrameShape(QFrame.HLine)
+        line_save.setFrameShadow(QFrame.Sunken)
+        vb_edit.addWidget(line_save)
+
+        self.btn_save = QPushButton("💾  Salva modifiche nel GeoJSON")
+        self.btn_save.setEnabled(False)
+        self.btn_save.setToolTip(
+            "Sovrascrive il file GeoJSON originale con le modifiche correnti"
+        )
+        self.btn_save.setStyleSheet(
+            "QPushButton { background-color: #6c3483; color: white; "
+            "border-color: #5b2c6f; font-weight: bold; "
+            "border-radius: 4px; padding: 6px 12px; min-height: 28px; }"
+            "QPushButton:hover { background-color: #5b2c6f; color: white; }"
+            "QPushButton:disabled { background-color: #c39bd3; color: #eee; }"
+        )
+        self.btn_save.clicked.connect(self._on_save_geojson)
+        vb_edit.addWidget(self.btn_save)
+
         main_layout.addWidget(grp_results)
 
-        # ---------- [5] Log / Stato ----------
+        # ---------- [6] Log / Stato ----------
         grp_log = QGroupBox("Log del Plugin")
         vb_log = QVBoxLayout(grp_log)
 
-        self.lbl_log = QLabel("Pronto.")
+        self.lbl_log = QLabel("Plugin pronto all'uso. Carica un file GeoJSON per iniziare.")
         self.lbl_log.setWordWrap(True)
         self.lbl_log.setStyleSheet(
             "font-size: 10px; color: #1a1a1a; "
@@ -464,16 +548,19 @@ class ParcheggiDock(QgsDockWidget):
             # --- Aggiorna le statistiche nel pannello ---
             self._update_layer_info()
 
-            # --- Abilita la selezione spaziale ---
+            # --- Abilita la selezione spaziale e i bottoni di modifica ---
+            self.btn_save.setEnabled(True)
             self.btn_select.setEnabled(True)
+            self.btn_add.setEnabled(True)
+            self.btn_remove.setEnabled(True)
 
             n_poly = self._layer_poly.featureCount()
             n_pts = self._layer_pts.featureCount()
             self._log(
-                f"✅ Caricamento completato (EPSG:3004).\n"
-                f"   • {n_poly} aree (poligoni)\n"
-                f"   • {n_pts} stalli/ingressi (punti)\n"
-                f"   • CRS progetto → Monte Mario / Italy Zone 2"
+                f"Caricamento completato.\n"
+                f"   • {n_poly} poligoni\n"
+                f"   • {n_pts} punti\n"
+                f"   • CRS impostato a EPSG:3004 - Monte Mario / Italy Zone 2"
             )
 
         except (FileNotFoundError, ValueError, RuntimeError) as exc:
@@ -530,13 +617,209 @@ class ParcheggiDock(QgsDockWidget):
             lbl.setTextFormat(Qt.RichText)
 
     # ======================================================================
+    # Slot: Aggiunta e Rimozione Parcheggi
+    # ======================================================================
+
+    def _on_activate_add(self):
+        """Attiva o disattiva il tool di aggiunta parcheggio sul canvas."""
+        if self._layer_pts is None:
+            return
+
+        # Controllo robusto: se la modalità 'add' è già attiva, annulla tutto
+        if getattr(self, '_active_edit_mode', None) == 'add':
+            self._on_edit_tool_finished()
+            return
+
+        # Imposta la modalità attuale su 'add'
+        self._active_edit_mode = 'add'
+        
+        self._log("Strumento aggiunta parcheggio attivato, in attesa del click sulla mappa…")
+        self._prev_map_tool = self.canvas.mapTool()
+        self._add_tool = AddParkingMapTool(self.canvas, self._layer_pts)
+        self._add_tool.feature_added.connect(self._on_feature_added)
+        self._add_tool.tool_finished.connect(self._on_edit_tool_finished)
+        self.canvas.setMapTool(self._add_tool)
+        
+        # Lascia il tasto "Aggiungi" abilitato per poterlo ricliccare e annullare
+        self.btn_add.setEnabled(True) 
+        self.btn_remove.setEnabled(False)
+        self.lbl_edit_status.setText("Clicca sulla mappa per aggiungere un parcheggio... \n (Riclicca 'Aggiungi' per annullare l'operazione)")
+        self.lbl_edit_status.setStyleSheet(
+            "color: #000000; font-size: 10px; font-weight: bold;"
+        )
+
+    def _on_activate_remove(self):
+        """Attiva o disattiva il tool di rimozione parcheggio sul canvas."""
+        if self._layer_pts is None and self._layer_poly is None:
+            return
+
+        # Controllo robusto: se la modalità 'remove' è già attiva, annulla tutto
+        if getattr(self, '_active_edit_mode', None) == 'remove':
+            self._on_edit_tool_finished()
+            return
+
+        # Imposta la modalità attuale su 'remove'
+        self._active_edit_mode = 'remove'
+
+        target = self._layer_pts if self._layer_pts else self._layer_poly
+        self._prev_map_tool = self.canvas.mapTool()
+        self._remove_tool = RemoveParkingMapTool(self.canvas, target)
+        self._remove_tool.feature_removed.connect(self._on_feature_removed)
+        self._remove_tool.tool_finished.connect(self._on_edit_tool_finished)
+        self.canvas.setMapTool(self._remove_tool)
+        
+        # Lascia il tasto "Rimuovi" abilitato per poterlo ricliccare e annullare
+        self.btn_add.setEnabled(False)
+        self.btn_remove.setEnabled(True)
+        self.lbl_edit_status.setText("Clicca su un parcheggio per rimuoverlo... \n(Riclicca 'Rimuovi' per annullare l'operazione)")
+        self.lbl_edit_status.setStyleSheet(
+            "color: #000000; font-size: 10px; font-weight: bold;"
+        )
+
+    def _on_feature_added(self, feat):
+        """Callback dopo l'aggiunta riuscita di un parcheggio."""
+        name = feat["name"] if "name" in self._layer_pts.fields().names() else ""
+        display = str(name) if name else "senza nome"
+        self.lbl_edit_status.setText(f"Aggiunto: {display}")
+        self.lbl_edit_status.setStyleSheet(
+            "color: #1a5276; font-size: 10px; font-weight: bold;"
+        )
+        self._log(f"Parcheggio aggiunto con successo: {display}")
+        # Termina il tool dopo l'aggiunta
+        self._on_edit_tool_finished()
+
+    def _on_feature_removed(self, name: str):
+        """Callback dopo la rimozione riuscita di un parcheggio."""
+        self.lbl_edit_status.setText(f"Rimosso: {name}")
+        self.lbl_edit_status.setStyleSheet(
+            "color: #784212; font-size: 10px; font-weight: bold;"
+        )
+        self._log(f"Parcheggio rimosso con successo: {name}")
+        # Termina il tool dopo la rimozione
+        self._on_edit_tool_finished()
+
+    def _on_edit_tool_finished(self):
+        """Ripristina il map tool precedente, resetta la modalità e riabilita i bottoni."""
+        # Resetta la variabile di stato così i bottoni possono riattivare i tool
+        self._active_edit_mode = None 
+        
+        self._restore_map_tool()
+        
+        self.btn_add.setEnabled(self._layer_pts is not None)
+        self.btn_remove.setEnabled(
+            self._layer_pts is not None or self._layer_poly is not None
+        )
+        self.lbl_edit_status.setText("")
+
+    def _on_save_geojson(self):
+        """
+        Sovrascrive il file GeoJSON originale con il contenuto
+        attuale dei layer (poligoni + punti) riproiettati in EPSG:4326,
+        che è il CRS standard obbligatorio per i file GeoJSON (RFC 7946).
+        """
+        if not self._filepath:
+            self._log("❌ Nessun file di origine trovato.")
+            return
+
+        import os
+        from qgis.core import (
+            QgsCoordinateReferenceSystem,
+            QgsCoordinateTransformContext,
+        )
+
+        # GeoJSON deve essere in EPSG:4326 per specifica RFC 7946
+        crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
+
+        # Opzioni di scrittura
+        options = QgsVectorFileWriter.SaveVectorOptions()
+        options.driverName = "GeoJSON"
+        options.fileEncoding = "UTF-8"
+        options.ct = QgsCoordinateTransform(
+            self._layer_poly.crs(),   # sorgente: EPSG:3004
+            crs_4326,                  # destinazione: EPSG:4326
+            QgsProject.instance()
+        )
+
+        # --- Salva un GeoJSON temporaneo per ogni layer ---
+        import tempfile, json
+
+        tmp_poly = tempfile.mktemp(suffix=".geojson")
+        tmp_pts  = tempfile.mktemp(suffix=".geojson")
+
+        err_poly, _ = QgsVectorFileWriter.writeAsVectorFormatV2(
+            self._layer_poly,
+            tmp_poly,
+            QgsCoordinateTransformContext(),
+            options,
+        )
+
+        options_pts = QgsVectorFileWriter.SaveVectorOptions()
+        options_pts.driverName = "GeoJSON"
+        options_pts.fileEncoding = "UTF-8"
+        options_pts.ct = QgsCoordinateTransform(
+            self._layer_pts.crs(),
+            crs_4326,
+            QgsProject.instance()
+        )
+
+        err_pts, _ = QgsVectorFileWriter.writeAsVectorFormatV2(
+            self._layer_pts,
+            tmp_pts,
+            QgsCoordinateTransformContext(),
+            options_pts,
+        )
+
+        if err_poly != QgsVectorFileWriter.NoError or \
+           err_pts  != QgsVectorFileWriter.NoError:
+            self._log("Errore durante la scrittura temporanea dei layer.")
+            return
+
+        # --- Unisce le feature dei 2 GeoJSON in un'unica FeatureCollection ---
+        try:
+            with open(tmp_poly, encoding="utf-8") as f:
+                poly_data = json.load(f)
+            with open(tmp_pts, encoding="utf-8") as f:
+                pts_data = json.load(f)
+
+            all_features = (
+                poly_data.get("features", []) +
+                pts_data.get("features",  [])
+            )
+
+            merged = {
+                "type": "FeatureCollection",
+                "features": all_features
+            }
+
+            with open(self._filepath, "w", encoding="utf-8") as f:
+                json.dump(merged, f, ensure_ascii=False, indent=2)
+
+        except Exception as exc:
+            self._log(f"❌ Errore durante il salvataggio:\n   {exc}")
+            return
+        finally:
+            # Pulizia file temporanei
+            for tmp in (tmp_poly, tmp_pts):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
+        n_tot = len(all_features)
+        self._log(
+            f"Salvataggio completato!\n"
+            f"   • {n_tot} parcheggi totali\n"
+            f"   • Percorso del file: {os.path.basename(self._filepath)}"
+        )
+
+    # ======================================================================
     # Slot: Selezione Spaziale
     # ======================================================================
 
     def _on_activate_selection(self):
         """
-        Attiva il RectangleMapTool sul canvas e attende che l'utente
-        disegni un rettangolo.
+        Tool per permettere all'utente di disegnare un rettangolo sulla mappa e
+        iniziare l'analisi spaziale sui parcheggi che cadono all'interno dell'area selezionata.
         """
         if self._layer_poly is None:
             self._log("⚠️  Nessun layer caricato.")
@@ -557,9 +840,9 @@ class ParcheggiDock(QgsDockWidget):
             "Disegna il rettangolo per la selezione dei parcheggi sulla mappa…"
         )
         self.lbl_tool_status.setStyleSheet(
-            "color: #27ae60; font-size: 10px; font-weight: bold;"
+            "color: #000000; font-size: 10px; font-weight: bold;"
         )
-        self._log("Strumento selezione attivato. Disegna un rettangolo.")
+        self._log("Strumento per l'analisi dei parcheggi attivato")
 
     def _on_rectangle_selected(self, rect: QgsRectangle):
         """
