@@ -297,6 +297,7 @@ class ParcheggiDock(QgsDockWidget):
         self.lbl_fee_yes    = QLabel("Parcheggi a pagamento: —")
         self.lbl_fee_no     = QLabel("Parcheggi gratuiti: —")
         self.lbl_fee_cond   = QLabel("Parcheggi con condizioni: —")
+        self.lbl_fee_none   = QLabel("Parcheggi senza informazioni: —")
 
         for lbl in (
             self.lbl_poly_count,
@@ -304,6 +305,7 @@ class ParcheggiDock(QgsDockWidget):
             self.lbl_fee_yes,
             self.lbl_fee_no,
             self.lbl_fee_cond,
+            self.lbl_fee_none,
         ):
             lbl.setStyleSheet(
                 "font-size: 11px; padding: 2px 4px; "
@@ -336,10 +338,10 @@ class ParcheggiDock(QgsDockWidget):
             "Clicca sulla mappa per aggiungere un nuovo punto di parcheggio"
         )
         self.btn_add.setStyleSheet(
-            "QPushButton { background-color: #1a5276; color: white; "
-            "border-color: #154360; font-weight: bold; "
+            "QPushButton { background-color: #27ae60; color: white; "
+            "border-color: #1e8449; font-weight: bold; "
             "border-radius: 6px; padding: 6px 12px; min-height: 23px; }"
-            "QPushButton:hover { background-color: #154360; color: white; }"
+            "QPushButton:hover { background-color: #1e8449; color: white; }"
             "QPushButton:disabled { background-color: #aab7c4; color: #eee; border-color: #ccc; }"
         )
         self.btn_add.clicked.connect(self._on_activate_add)
@@ -355,7 +357,7 @@ class ParcheggiDock(QgsDockWidget):
             "border-color: #6e2c0e; font-weight: bold; "
             "border-radius: 6px; padding: 6px 12px; min-height: 23px; }"
             "QPushButton:hover { background-color: #6e2c0e; color: white; }"
-            "QPushButton:disabled { background-color: #c4a882; color: #eee; border-color: #ccc; }"
+            "QPushButton:disabled { background-color: #aab7c4; color: #eee; border-color: #ccc; }"
         )
         self.btn_remove.clicked.connect(self._on_activate_remove)
 
@@ -460,8 +462,9 @@ class ParcheggiDock(QgsDockWidget):
             "border-color: #5b2c6f; font-weight: bold; "
             "border-radius: 4px; padding: 6px 12px; min-height: 28px; }"
             "QPushButton:hover { background-color: #5b2c6f; color: white; }"
-            "QPushButton:disabled { background-color: #c39bd3; color: #eee; }"
+            "QPushButton:disabled { background-color: #aab7c4; color: #eee; }"
         )
+        
         self.btn_save.clicked.connect(self._on_save_geojson)
         vb_edit.addWidget(self.btn_save)
 
@@ -585,18 +588,21 @@ class ParcheggiDock(QgsDockWidget):
         n_pts = self._layer_pts.featureCount() if self._layer_pts else 0
 
         # Conta le feature per valore di 'fee'
-        fee_yes = fee_no = fee_cond = 0
+        fee_yes = fee_no = fee_cond = fee_none = 0
         for feat in self._layer_poly.getFeatures():
             val = feat["fee"]
-            if val is None or str(val).strip() == "":
-                continue
-            v = str(val).lower().strip()
-            if v == "yes":
+            v = str(val).strip()
+            v_lower = v.lower()
+            if v_lower == "yes":
                 fee_yes += 1
-            elif v == "no":
+            elif v_lower == "no":
                 fee_no += 1
-            else:
+            elif v_lower in ("privat", "private") or any(c in v for c in (":", "-", "00")):
+                # Orari (es. "08:00-20:00", "Mo-Sa 08:30-19:30") e valori privati ("Privat", "Private")
                 fee_cond += 1
+            else:
+                # Qualsiasi altro valore non previsto
+                fee_none += 1
 
         self.lbl_poly_count.setText(f"Parcheggi Poligonali caricati:  <b>{n_poly}</b>")
         self.lbl_pts_count.setText(f"Punti di Parcheggio caricati: <b>{n_pts}</b>")
@@ -609,10 +615,13 @@ class ParcheggiDock(QgsDockWidget):
         self.lbl_fee_cond.setText(
             f"Parcheggi con condizioni <span style='color:orange'>■</span>: <b>{fee_cond}</b>"
         )
+        self.lbl_fee_none.setText(
+            f"Parcheggi senza informazioni <span style='color:gray'>■</span>: <b>{fee_none}</b>"
+        )
 
         for lbl in (
             self.lbl_poly_count, self.lbl_pts_count,
-            self.lbl_fee_yes, self.lbl_fee_no, self.lbl_fee_cond,
+            self.lbl_fee_yes, self.lbl_fee_no, self.lbl_fee_cond, self.lbl_fee_none,
         ):
             lbl.setTextFormat(Qt.RichText)
 
@@ -1035,13 +1044,7 @@ class ParcheggiDock(QgsDockWidget):
         project = QgsProject.instance()
         to_remove = []
         for lid, layer in project.mapLayers().items():
-            if layer.name() in (
-                "Parcheggi – Aree (Poligoni) [EPSG:3004]",
-                "Parcheggi – Stalli/Ingressi (Punti) [EPSG:3004]",
-                # Compatibilità con versioni precedenti del plugin
-                "Parcheggi – Aree (Poligoni)",
-                "Parcheggi – Stalli/Ingressi (Punti)",
-            ):
+            if layer.name() in ("Parcheggi – Poligoni", "Parcheggi – Punti"):
                 to_remove.append(lid)
         if to_remove:
             project.removeMapLayers(to_remove)
