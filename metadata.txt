@@ -1,14 +1,14 @@
 [general]
-name=Analisi Parcheggi
+name=Parking Manager
 qgisMinimumVersion=3.0
-description=Plugin per l'analisi avanzata di dati GeoJSON sui parcheggi. Carica un file GeoJSON, separa geometrie puntuali e poligonali, applica simbologia categorizzata per attributo 'fee' e permette selezione spaziale con calcolo statistiche.
+description=Plugin per la gestione avanzata di dati GeoJSON sui parcheggi. Carica un file GeoJSON, separa geometrie puntuali e poligonali, applica simbologia categorizzata per attributo 'fee' e permette l'aggiunta, la rimozione, il salvataggio e la selezione spaziale con analisi dei risultati.
 version=1.0.0
 author=Gasperoni Mattia
 email=mattiagasperoni02@gmail.com
-about=Plugin didattico sviluppato per esame universitario. Funzionalità principali: caricamento GeoJSON con separazione geometrie, simbologia categorizzata (fee: yes=rosso / no=verde / condizionale=arancione), etichette automatiche sul campo 'name', selezione rettangolare interattiva sulla mappa con conteggio parcheggi e somma della capacità totale.
+about=Plugin didattico sviluppato per l'esame universitario del corso di Geomatica. 
 tracker=https://github.com/MattiaGasperoni/qgis-parking-manager/issues
 repository=https://github.com/MattiaGasperoni/qgis-parking-manager
-tags=parcheggi, parking, geojson, analisi spaziale, selezione
+tags=parking, geojson, python
 homepage=https://github.com/MattiaGasperoni/qgis-parking-manager
 category=Vector
 icon=icon.png
