@@ -168,12 +168,7 @@ def _collect_fields(features: List[Dict]) -> QgsFields:
     return fields
 
 
-def build_memory_layer(
-    features: List[Dict],
-    layer_name: str,
-    geometry_type: str,
-    crs: str = "EPSG:4326",
-) -> QgsVectorLayer:
+def extract_features_and_create_layer(features: List[Dict], layer_name: str, geometry_type: str, crs: str = "EPSG:4326",) -> QgsVectorLayer:
     """
     Crea un QgsVectorLayer in memoria a partire da una lista di
     feature GeoJSON dizionario.
@@ -376,19 +371,22 @@ def reproject_layer(
 
 def apply_fee_symbology(layer: QgsVectorLayer) -> None:
     """
-    Applica al layer poligonale una simbologia categorizzata basata
-    sul campo ``fee``.
+    Applica una simbologia categorizzata basata sul campo ``fee``
+    sia ai layer poligonali (QgsFillSymbol) che puntuali (QgsMarkerSymbol).
 
     Classi:
-      - ``yes``       → rosso    (#e74c3c)
-      - ``no``        → verde    (#27ae60)
-      - valori orario → arancione(#f39c12)
-      - vuoto/None    → grigio   (#95a5a6)
+      - ``yes``       → rosso     (#e74c3c)
+      - ``no``        → verde     (#27ae60)
+      - valori orario → arancione (#f39c12)
+      - vuoto/None    → grigio    (#95a5a6)
 
-    :param layer: Layer vettoriale poligonale già caricato.
+    :param layer: Layer vettoriale poligonale o puntuale già caricato.
     """
     if "fee" not in [f.name() for f in layer.fields()]:
         return  # Campo assente: nessuna simbologia
+
+    # Determina se il layer è puntuale o poligonale
+    is_point = layer.geometryType() == QgsWkbTypes.PointGeometry
 
     # Raccoglie i valori distinti di 'fee' presenti nel layer
     fee_values = set()
@@ -407,30 +405,48 @@ def apply_fee_symbology(layer: QgsVectorLayer) -> None:
         elif val_lower == "no":
             style_key = "no"
         else:
-            # Qualsiasi valore condizionale (orari, "Private", ecc.)
             style_key = "_cond"
 
         color_hex, border_hex, label = FEE_STYLE[style_key]
 
-        sym = QgsFillSymbol.createSimple({
-            "color":         color_hex,
-            "color_border":  border_hex,
-            "width_border":  "0.4",
-            "style":         "solid",
-        })
+        if is_point:
+            sym = QgsMarkerSymbol.createSimple({
+                "name":          "circle",
+                "color":         color_hex,
+                "color_border":  border_hex,
+                "size":          "3.0",
+                "outline_width": "0.4",
+            })
+        else:
+            sym = QgsFillSymbol.createSimple({
+                "color":        color_hex,
+                "color_border": border_hex,
+                "width_border": "0.4",
+                "style":        "solid",
+            })
 
-        # Etichetta nella legenda: valore originale + descrizione
         legend_label = f"{val} — {label.split('(')[0].strip()}"
         categories.append(QgsRendererCategory(val, sym, legend_label))
 
     # Categoria per valori nulli / non specificati
     null_color, null_border, null_label = FEE_STYLE["_none"]
-    null_sym = QgsFillSymbol.createSimple({
-        "color":        null_color,
-        "color_border": null_border,
-        "width_border": "0.3",
-        "style":        "solid",
-    })
+
+    if is_point:
+        null_sym = QgsMarkerSymbol.createSimple({
+            "name":          "circle",
+            "color":         null_color,
+            "color_border":  null_border,
+            "size":          "3.0",
+            "outline_width": "0.3",
+        })
+    else:
+        null_sym = QgsFillSymbol.createSimple({
+            "color":        null_color,
+            "color_border": null_border,
+            "width_border": "0.3",
+            "style":        "solid",
+        })
+
     categories.append(
         QgsRendererCategory("", null_sym, null_label)
     )
@@ -438,29 +454,6 @@ def apply_fee_symbology(layer: QgsVectorLayer) -> None:
     renderer = QgsCategorizedSymbolRenderer("fee", categories)
     layer.setRenderer(renderer)
     layer.triggerRepaint()
-
-
-# ===========================================================================
-# Simbologia layer punti
-# ===========================================================================
-
-def apply_point_symbology(layer: QgsVectorLayer) -> None:
-    """
-    Applica al layer puntuale una simbologia semplice con cerchio blu
-    per rappresentare gli ingressi/stalli.
-
-    :param layer: Layer vettoriale puntuale.
-    """
-    sym = QgsMarkerSymbol.createSimple({
-        "name":          "circle",
-        "color":         "#2980b9",
-        "color_border":  "#1a5276",
-        "size":          "3.0",
-        "outline_width": "0.4",
-    })
-    layer.renderer().setSymbol(sym)
-    layer.triggerRepaint()
-
 
 # ===========================================================================
 # Etichette automatiche
@@ -518,22 +511,11 @@ def apply_name_labels(layer: QgsVectorLayer) -> None:
 # Funzione di alto livello
 # ===========================================================================
 
-def load_geojson_to_layers(
-    filepath: str,
-    target_crs: str = CRS_TARGET,
-) -> Tuple[QgsVectorLayer, QgsVectorLayer]:
+def load_geojson_to_layers(filepath: str,target_crs: str = CRS_TARGET,) -> Tuple[QgsVectorLayer, QgsVectorLayer]:
     """
-    Funzione principale: carica un GeoJSON di parcheggi e restituisce
-    due layer in memoria **riproiettati in EPSG:3004**, già stilizzati
+    Carica un file GeoJSON e restituisce
+    due layer in memoria **proiettati in EPSG:3004**, già stilizzati
     e pronti per essere aggiunti al progetto QGIS.
-
-    Passi eseguiti:
-      1. Parsing del GeoJSON e separazione per tipo geometria
-      2. Creazione layer temporanei in EPSG:4326 (CRS nativo GeoJSON)
-      3. Riproiezione in ``target_crs`` (default EPSG:3004)
-      4. Simbologia categorizzata 'fee' sul layer poligoni
-      5. Simbologia semplice sul layer punti
-      6. Etichette 'name' su entrambi i layer
 
     :param filepath:   Percorso assoluto al file .geojson
     :param target_crs: CRS di destinazione (default ``EPSG:3004``)
@@ -542,35 +524,25 @@ def load_geojson_to_layers(
     """
     points_feat, polygons_feat, _ = parse_geojson(filepath)
 
-    # ---- Step 1: layer temporanei in EPSG:4326 (coord lon/lat del GeoJSON) ----
-    _tmp_poly = build_memory_layer(
-        polygons_feat,
-        layer_name="_tmp_poly",
-        geometry_type="MultiPolygon",
-        crs=CRS_SOURCE,
-    )
-    _tmp_pts = build_memory_layer(
-        points_feat,
-        layer_name="_tmp_pts",
-        geometry_type="Point",
-        crs=CRS_SOURCE,
-    )
+    # Estrazione delle feature dei parcheggi dal GeoJSON e creazione dei layer temporanei in EPSG:4326
+    _tmp_poly = extract_features_and_create_layer(polygons_feat, layer_name="_tmp_poly", geometry_type="MultiPolygon", crs=CRS_SOURCE,)
+    _tmp_pts = extract_features_and_create_layer(points_feat, layer_name="_tmp_pts", geometry_type="Point", crs=CRS_SOURCE,)
 
-    # ---- Step 2: riproiezione in EPSG:3004 ----
+    # Riproiezione dei layer EPSG:4326 in EPSG:3004
     layer_poly = reproject_layer(_tmp_poly, target_crs)
-    layer_poly.setName("Parcheggi – Aree (Poligoni) [EPSG:3004]")
+    layer_poly.setName("Parcheggi – Poligoni")
 
     layer_pts = reproject_layer(_tmp_pts, target_crs)
-    layer_pts.setName("Parcheggi – Stalli/Ingressi (Punti) [EPSG:3004]")
+    layer_pts.setName("Parcheggi – Punti")
 
-    # I layer temporanei non servono più
+    # Rimozione dei due layer temporanei in EPSG:4326
     del _tmp_poly, _tmp_pts
 
-    # ---- Step 3: simbologia ed etichette sui layer riproiettati ----
+    # Applichiamo ad ogni parcheggio il suo nome e le sue proprietà
     apply_fee_symbology(layer_poly)
     apply_name_labels(layer_poly)
 
-    apply_point_symbology(layer_pts)
+    apply_fee_symbology(layer_pts)
     apply_name_labels(layer_pts)
 
     return layer_poly, layer_pts

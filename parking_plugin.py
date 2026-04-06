@@ -65,7 +65,7 @@ class ParcheggiPlugin:
         # --- Azione nella toolbar Plugins ---
         self.action = QAction(
             icon,
-            "Analisi Parcheggi",
+            "Parking Manager",
             self.iface.mainWindow()
         )
         self.action.setObjectName("parcheggiAction")
@@ -76,7 +76,7 @@ class ParcheggiPlugin:
         self.action.triggered.connect(self._toggle_dock)
 
         # Aggiunge l'azione al menu Plugins e alla toolbar Plugins
-        self.iface.addPluginToMenu("&Analisi Parcheggi", self.action)
+        self.iface.addPluginToMenu("&Parking Manager", self.action)
         self.iface.addToolBarIcon(self.action)
 
         # --- Crea e registra la DockWidget ---
@@ -106,7 +106,7 @@ class ParcheggiPlugin:
             self.dock_widget = None
 
         if self.action is not None:
-            self.iface.removePluginMenu("&Analisi Parcheggi", self.action)
+            self.iface.removePluginMenu("&Parking Manager", self.action)
             self.iface.removeToolBarIcon(self.action)
             self.action = None
 
