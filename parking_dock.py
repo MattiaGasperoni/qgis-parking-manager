@@ -814,7 +814,7 @@ class ParcheggiDock(QgsDockWidget):
         Attiva il tool per disegnare un rettangolo sulla mappa e
         avviare l'analisi spaziale dei parcheggi nell'area selezionata.
         """
-        if self._layer_poly is None:
+        if self._layer_poly is None and self._layer_pts is None:
             self._log("⚠️  Nessun layer caricato.")
             return
 
@@ -861,7 +861,11 @@ class ParcheggiDock(QgsDockWidget):
         self.card_capacity.reset()
         self.lbl_detail.setText("")
         self.lbl_tool_status.setText("")
-        self.btn_select.setEnabled(self._layer_poly is not None)
+        
+        # Riabilita se esiste almeno uno dei due layer
+        layer_exists = (self._layer_poly is not None) or (self._layer_pts is not None)
+        self.btn_select.setEnabled(layer_exists)
+        
         self.btn_clear.setEnabled(False)
         self._log("Reset effettuato.")
 
@@ -880,91 +884,107 @@ class ParcheggiDock(QgsDockWidget):
 
     def _run_spatial_analysis(self, rect: QgsRectangle):
         """
-        Conta i parcheggi (poligoni) che cadono nell'area selezionata
+        Conta i parcheggi (poligoni e punti) che cadono nell'area selezionata
         e somma il valore dell'attributo ``capacity``.
-
-        Algoritmo:
-          1. Trasforma il rettangolo nel CRS del layer se necessario
-          2. Usa QgsFeatureRequest con filterRect per pre-filtraggio BBOX
-          3. Verifica l'intersezione geometrica esatta con ExactIntersect
-          4. Somma capacity e classifica per fee
-
-        :param rect: QgsRectangle nel CRS del canvas.
         """
-        if self._layer_poly is None:
+        # Creiamo una lista dei layer effettivamente caricati
+        layers_to_analyze = []
+        if self._layer_poly is not None:
+            layers_to_analyze.append(self._layer_poly)
+        if self._layer_pts is not None:
+            layers_to_analyze.append(self._layer_pts)
+
+        if not layers_to_analyze:
             return
 
-        # Trasformazione CRS se necessaria
         canvas_crs = self.canvas.mapSettings().destinationCrs()
-        layer_crs  = self._layer_poly.crs()
-        if canvas_crs != layer_crs:
-            transform = QgsCoordinateTransform(
-                canvas_crs, layer_crs, QgsProject.instance()
-            )
-            rect = transform.transformBoundingBox(rect)
-
-        request = QgsFeatureRequest().setFilterRect(rect)
-        request.setFlags(QgsFeatureRequest.ExactIntersect)
 
         count_parking    = 0
         total_capacity   = 0
         capacity_missing = 0
         fee_breakdown    = {"yes": 0, "no": 0, "conditional": 0, "unknown": 0}
 
-        for feat in self._layer_poly.getFeatures(request):
-            count_parking += 1
+        # Iteriamo su tutti i layer disponibili (poligoni e punti)
+        for layer in layers_to_analyze:
+            layer_crs = layer.crs()
+            
+            # Copiamo il rettangolo per non sovrascrivere l'originale ad ogni iterazione
+            current_rect = QgsRectangle(rect)
+            
+            # Trasformazione CRS specifica per il layer corrente se necessaria
+            if canvas_crs != layer_crs:
+                transform = QgsCoordinateTransform(
+                    canvas_crs, layer_crs, QgsProject.instance()
+                )
+                current_rect = transform.transformBoundingBox(rect)
 
-            cap_val = feat["capacity"]
-            if cap_val is not None and str(cap_val).strip() != "":
-                try:
-                    total_capacity += int(cap_val)
-                except (TypeError, ValueError):
-                    capacity_missing += 1
-            else:
-                capacity_missing += 1
+            request = QgsFeatureRequest().setFilterRect(current_rect)
+            request.setFlags(QgsFeatureRequest.ExactIntersect)
 
-            fee_val = feat["fee"]
-            if fee_val is None or str(fee_val).strip() == "":
-                fee_breakdown["unknown"] += 1
-            else:
-                v = str(fee_val).lower().strip()
-                if v == "yes":
-                    fee_breakdown["yes"] += 1
-                elif v == "no":
-                    fee_breakdown["no"] += 1
+            for feat in layer.getFeatures(request):
+                count_parking += 1
+
+                # Gestione Capacity
+                cap_val = feat.attribute("capacity") if "capacity" in feat.fields().names() else None
+                if cap_val is not None and str(cap_val).strip() != "":
+                    try:
+                        total_capacity += int(cap_val)
+                    except (TypeError, ValueError):
+                        capacity_missing += 1
                 else:
-                    fee_breakdown["conditional"] += 1
+                    capacity_missing += 1
+
+                # Gestione Fee
+                fee_val = feat.attribute("fee") if "fee" in feat.fields().names() else None
+                if fee_val is None or str(fee_val).strip() == "":
+                    fee_breakdown["unknown"] += 1
+                else:
+                    v = str(fee_val).lower().strip()
+                    if v == "yes":
+                        fee_breakdown["yes"] += 1
+                    elif v == "no":
+                        fee_breakdown["no"] += 1
+                    else:
+                        fee_breakdown["conditional"] += 1
 
         self._display_results(count_parking, total_capacity, capacity_missing, fee_breakdown)
 
     def _display_results(self, count: int, capacity: int, cap_missing: int, fee_breakdown: dict):
         """
-        Aggiorna i widget di risultato con i valori dell'analisi.
-
-        :param count:         Numero di parcheggi nell'area selezionata
-        :param capacity:      Somma dei posti auto disponibili
-        :param cap_missing:   Numero di feature senza attributo capacity
-        :param fee_breakdown: Dizionario con conteggio per categoria fee
+        Aggiorna i widget di risultato con i valori dell'analisi,
+        utilizzando lo stesso stile della sezione informativa.
         """
         self.card_count.set_value(count)
         self.card_capacity.set_value(capacity if capacity > 0 else "N/D")
 
         detail_parts = []
         if fee_breakdown["yes"]:
-            detail_parts.append(f"🔴 A pagamento: {fee_breakdown['yes']}")
-        if fee_breakdown["no"]:
-            detail_parts.append(f"🟢 Gratuiti: {fee_breakdown['no']}")
-        if fee_breakdown["conditional"]:
-            detail_parts.append(f"🟠 Condizionale: {fee_breakdown['conditional']}")
-        if fee_breakdown["unknown"]:
-            detail_parts.append(f"⚪ Fee non specificato: {fee_breakdown['unknown']}")
-        if cap_missing:
             detail_parts.append(
-                f"\nAttenzione! {cap_missing} parcheggi non specificano la capacità "
-                "e non sono inclusi nel totale dei posti auto."
+                f"Parcheggi a pagamento <span style='color:red'>■</span>: <b>{fee_breakdown['yes']}</b>"
+            )
+        if fee_breakdown["no"]:
+            detail_parts.append(
+                f"Parcheggi gratuiti <span style='color:green'>■</span>: <b>{fee_breakdown['no']}</b>"
+            )
+        if fee_breakdown["conditional"]:
+            detail_parts.append(
+                f"Parcheggi con condizioni <span style='color:orange'>■</span>: <b>{fee_breakdown['conditional']}</b>"
+            )
+        if fee_breakdown["unknown"]:
+            detail_parts.append(
+                f"Parcheggi senza informazioni <span style='color:gray'>■</span>: <b>{fee_breakdown['unknown']}</b>"
+            )
+        
+        if cap_missing:
+            # Aggiunto un piccolo stacco e uno stile corsivo/grigio per l'avviso
+            detail_parts.append(
+                f"<br><span style='color:#6c6c70;'><i>Attenzione: {cap_missing} parcheggi non specificano la capacità "
+                "e non sono inclusi nel totale dei posti auto.</i></span>"
             )
 
-        self.lbl_detail.setText("\n\n".join(detail_parts))
+        # Forziamo il formato RichText per leggere correttamente l'HTML e uniamo con <br> invece di \n
+        self.lbl_detail.setTextFormat(Qt.RichText)
+        self.lbl_detail.setText("<br>".join(detail_parts))
 
         self.lbl_tool_status.setText("✅  Analisi dei parcheggi completata")
         self.lbl_tool_status.setStyleSheet(
