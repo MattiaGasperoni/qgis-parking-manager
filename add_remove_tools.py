@@ -50,91 +50,281 @@ from qgis.core import (
 
 class AddParkingDialog(QDialog):
     """
-    Finestra modale per inserire gli attributi del nuovo parcheggio
-    prima di aggiungerlo al layer.
+    Finestra modale moderna per inserire gli attributi del nuovo parcheggio.
 
-    Campi proposti:
-      - name     : nome del parcheggio (testo libero)
-      - fee      : yes / no / condizionale
-      - capacity : numero intero (posti auto)
-      - surface  : tipo di superficie (lista predefinita)
+    Campi:
+      - name     : nome del parcheggio
+      - fee      : tariffazione (yes / no)
+      - capacity : numero posti auto
+      - surface  : tipo di superficie
+      - operator : gestore del parcheggio       
+      - covered  : parcheggio coperto           
+      - lit      : illuminazione notturna       
+      - access   : tipo di accesso              
     """
+
+    # Palette colori
+    _PRIMARY   = "#1a5276"
+    _ACCENT    = "#2980b9"
+    _BG        = "#f4f6f9"
+    _CARD_BG   = "#ffffff"
+    _BORDER    = "#dce3ec"
+    _TEXT      = "#1a1a2e"
+    _MUTED     = "#7f8c8d"
+    _SUCCESS   = "#27ae60"
+    _DANGER    = "#e74c3c"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Aggiungi Parcheggio")
-        self.setMinimumWidth(320)
+        self.setWindowTitle("Nuovo Parcheggio")
+        self.setMinimumWidth(420)
+        self.setMinimumHeight(540)
         self.setModal(True)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        # Sfondo generale
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self._BG};
+                color: {self._TEXT};
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 11px;
+            }}
+            QLabel {{
+                color: {self._TEXT};
+                background: transparent;
+            }}
+            QLabel.section-title {{
+                font-size: 10px;
+                font-weight: bold;
+                color: {self._MUTED};
+                letter-spacing: 1px;
+            }}
+            QLineEdit, QComboBox {{
+                background-color: {self._CARD_BG};
+                border: 1.5px solid {self._BORDER};
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: {self._TEXT};
+                font-size: 11px;
+                min-height: 28px;
+            }}
+            QLineEdit:focus, QComboBox:focus {{
+                border-color: {self._ACCENT};
+            }}
+            QLineEdit::placeholder {{
+                color: {self._MUTED};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 24px;
+            }}
+            QFrame#card {{
+                background-color: {self._CARD_BG};
+                border: 1px solid {self._BORDER};
+                border-radius: 10px;
+            }}
+            QPushButton#btn_ok {{
+                background-color: {self._SUCCESS};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-weight: bold;
+                font-size: 12px;
+                min-height: 36px;
+            }}
+            QPushButton#btn_ok:hover {{
+                background-color: #1e8449;
+            }}
+            QPushButton#btn_cancel {{
+                background-color: {self._CARD_BG};
+                color: {self._MUTED};
+                border: 1.5px solid {self._BORDER};
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 12px;
+                min-height: 36px;
+            }}
+            QPushButton#btn_cancel:hover {{
+                background-color: #f0f0f0;
+                color: {self._DANGER};
+                border-color: {self._DANGER};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #2c3e50;
+                color: #ffffff;
+                selection-background-color: {self._ACCENT};
+                selection-color: #ffffff;
+                border: 1px solid {self._BORDER};
+                border-radius: 4px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 24px;
+                padding: 4px 8px;
+                color: #ffffff;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {self._ACCENT};
+                color: #ffffff;
+            }}
+        """)
 
-        # --- Intestazione ---
-        lbl_header = QLabel("Inserisci i dati del nuovo parcheggio:")
-        lbl_header.setStyleSheet(
-            "font-weight: bold; font-size: 11px; color: #1a5276;"
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        # ── Header ──────────────────────────────────────────────────
+        header = QFrame()
+        header.setStyleSheet(f"""
+            background: qlineargradient(
+                x1:0, y1:0, x2:1, y2:0,
+                stop:0 {self._PRIMARY},
+                stop:1 {self._ACCENT}
+            );
+            border-radius: 10px;
+        """)
+        hb = QHBoxLayout(header)
+        hb.setContentsMargins(16, 12, 16, 12)
+
+        icon_lbl = QLabel("🅿")
+        icon_lbl.setStyleSheet(
+            "font-size: 28px; background: transparent; color: white;"
         )
-        layout.addWidget(lbl_header)
+        title_lbl = QLabel("Aggiungi Parcheggio")
+        title_lbl.setStyleSheet(
+            "font-size: 15px; font-weight: bold; "
+            "color: white; background: transparent;"
+        )
+        sub_lbl = QLabel("Compila i campi del nuovo parcheggio da aggiungere alla mappa")
+        sub_lbl.setStyleSheet(
+            "font-size: 10px; color: rgba(255,255,255,0.8); "
+            "background: transparent;"
+        )
 
-        # Separatore
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(line)
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        text_col.addWidget(title_lbl)
+        text_col.addWidget(sub_lbl)
 
-        # --- Form dei campi ---
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight)
-        form.setSpacing(8)
+        hb.addWidget(icon_lbl)
+        hb.addSpacing(8)
+        hb.addLayout(text_col)
+        hb.addStretch()
+        root.addWidget(header)
 
-        # name
+        # ── Card: Informazioni principali ───────────────────────────
+        root.addWidget(self._section_label("📋  INFORMAZIONI PRINCIPALI"))
+        card1 = self._make_card()
+        form1 = QFormLayout(card1)
+        form1.setContentsMargins(14, 12, 14, 12)
+        form1.setSpacing(10)
+        form1.setLabelAlignment(Qt.AlignRight)
+
         self.edit_name = QLineEdit()
-        self.edit_name.setPlaceholderText("es. Parcheggio Centrale")
-        form.addRow("Nome:", self.edit_name)
+        self.edit_name.setPlaceholderText("es. Parcheggio Piazza Roma")
+        form1.addRow("Nome:", self.edit_name)
 
-        # fee
+        self.combo_access = QComboBox()
+        self.combo_access.addItem("— Non specificato —", "")
+        self.combo_access.addItem("🌐  Pubblico",         "yes")
+        self.combo_access.addItem("🔒  Privato",          "private")
+        self.combo_access.addItem("🛍  Solo clienti",     "customers")
+        self.combo_access.addItem("🏢  Solo residenti",   "residents")
+        form1.addRow("Accesso:", self.combo_access)
+
+        root.addWidget(card1)
+
+        # ── Card: Tariffe e capacità ────────────────────────────────
+        root.addWidget(self._section_label("💶  TARIFFE E CAPACITÀ"))
+        card2 = self._make_card()
+        form2 = QFormLayout(card2)
+        form2.setContentsMargins(14, 12, 14, 12)
+        form2.setSpacing(10)
+        form2.setLabelAlignment(Qt.AlignRight)
+
         self.combo_fee = QComboBox()
-        self.combo_fee.addItems(["yes", "no", ""])
-        self.combo_fee.setToolTip(
-            "yes = a pagamento  |  no = gratuito  |  vuoto = non specificato"
-        )
-        form.addRow("Fee:", self.combo_fee)
+        self.combo_fee.addItem("— Non specificato —", "")
+        self.combo_fee.addItem("✅  Gratuito",          "no")
+        self.combo_fee.addItem("💳  A pagamento",       "yes")
+        form2.addRow("Tariffa:", self.combo_fee)
 
-        # capacity
         self.edit_capacity = QLineEdit()
-        self.edit_capacity.setPlaceholderText("es. 50  (lascia vuoto se sconosciuto)")
-        form.addRow("Capacità:", self.edit_capacity)
+        self.edit_capacity.setPlaceholderText("es. 120  (lascia vuoto se sconosciuto)")
+        form2.addRow("Posti auto:", self.edit_capacity)
 
-        # surface
+        root.addWidget(card2)
+
+        # ── Card: Caratteristiche fisiche ───────────────────────────
+        root.addWidget(self._section_label("🏗  CARATTERISTICHE FISICHE"))
+        card3 = self._make_card()
+        form3 = QFormLayout(card3)
+        form3.setContentsMargins(14, 12, 14, 12)
+        form3.setSpacing(10)
+        form3.setLabelAlignment(Qt.AlignRight)
+
         self.combo_surface = QComboBox()
-        self.combo_surface.addItems([
-            "",           # non specificato
-            "asphalt",
-            "concrete",
-            "paving_stones",
-            "gravel",
-            "ground",
-            "grass",
-            "sand",
-            "unpaved",
-        ])
-        form.addRow("Superficie:", self.combo_surface)
+        self.combo_surface.addItem("— Non specificato —",  "")
+        self.combo_surface.addItem("🛣  Asfalto",           "asphalt")
+        self.combo_surface.addItem("🧱  Cemento",           "concrete")
+        self.combo_surface.addItem("🔲  Pavé",              "paving_stones")
+        self.combo_surface.addItem("🪨  Ghiaia",            "gravel")
+        self.combo_surface.addItem("🌿  Erba",              "grass")
+        self.combo_surface.addItem("🌱  Terreno",           "ground")
+        self.combo_surface.addItem("🏜  Sabbia",            "sand")
+        self.combo_surface.addItem("❓  Non pavimentato",  "unpaved")
+        form3.addRow("Superficie:", self.combo_surface)
 
-        layout.addLayout(form)
+        self.combo_covered = QComboBox()
+        self.combo_covered.addItem("— Non specificato —", "")
+        self.combo_covered.addItem("☀️  All'aperto",       "no")
+        self.combo_covered.addItem("🏠  Coperto",          "yes")
+        form3.addRow("Copertura:", self.combo_covered)
 
-        # --- Pulsanti OK / Annulla ---
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
-            Qt.Horizontal,
+        self.combo_lit = QComboBox()
+        self.combo_lit.addItem("— Non specificato —",  "")
+        self.combo_lit.addItem("💡  Illuminato",        "yes")
+        self.combo_lit.addItem("🌑  Non illuminato",    "no")
+        form3.addRow("Illuminazione:", self.combo_lit)
+
+        root.addWidget(card3)
+
+        # ── Bottoni ─────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.btn_cancel = QPushButton("✖  Annulla")
+        self.btn_cancel.setObjectName("btn_cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_ok = QPushButton("✅  Aggiungi Parcheggio")
+        self.btn_ok.setObjectName("btn_ok")
+        self.btn_ok.setDefault(True)
+        self.btn_ok.clicked.connect(self._on_accept)
+
+        btn_row.addWidget(self.btn_cancel)
+        btn_row.addWidget(self.btn_ok)
+        root.addLayout(btn_row)
+
+    # ── Helper UI ───────────────────────────────────────────────────
+
+    def _make_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("card")
+        return card
+
+    def _section_label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"font-size: 9px; font-weight: bold; "
+            f"color: {self._MUTED}; letter-spacing: 1px; "
+            f"background: transparent; padding: 0 2px;"
         )
-        buttons.button(QDialogButtonBox.Ok).setText("✅  Aggiungi")
-        buttons.button(QDialogButtonBox.Cancel).setText("✖  Annulla")
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        return lbl
+
+    # ── Validazione ─────────────────────────────────────────────────
 
     def _on_accept(self):
-        """Valida il campo capacity prima di chiudere."""
         cap_text = self.edit_capacity.text().strip()
         if cap_text:
             try:
@@ -143,15 +333,13 @@ class AddParkingDialog(QDialog):
                 QMessageBox.warning(
                     self,
                     "Valore non valido",
-                    "Il campo 'Capacità' deve essere un numero intero\n"
+                    f"Il campo 'Posti auto' deve essere un numero intero\n"
                     f"(hai inserito: '{cap_text}').",
                 )
                 return
         self.accept()
 
-    # ------------------------------------------------------------------
-    # Proprietà di accesso ai valori inseriti
-    # ------------------------------------------------------------------
+    # ── Proprietà (valori in inglese per il GeoJSON) ─────────────────
 
     @property
     def name(self) -> str:
@@ -159,18 +347,28 @@ class AddParkingDialog(QDialog):
 
     @property
     def fee(self) -> str:
-        return self.combo_fee.currentText().strip()
+        return self.combo_fee.currentData()
 
     @property
     def capacity(self):
-        """Restituisce int se specificato, None altrimenti."""
         t = self.edit_capacity.text().strip()
         return int(t) if t else None
 
     @property
     def surface(self) -> str:
-        return self.combo_surface.currentText().strip()
+        return self.combo_surface.currentData()
 
+    @property
+    def covered(self) -> str:
+        return self.combo_covered.currentData()
+
+    @property
+    def lit(self) -> str:
+        return self.combo_lit.currentData()
+
+    @property
+    def access(self) -> str:
+        return self.combo_access.currentData()
 
 # ===========================================================================
 # Map Tool — Aggiunta parcheggio
@@ -262,7 +460,10 @@ class AddParkingMapTool(QgsMapTool):
         if "capacity" in field_names: feat.setAttribute("capacity", dlg.capacity)
         if "surface"  in field_names: feat.setAttribute("surface",  dlg.surface or None)
         if "amenity"  in field_names: feat.setAttribute("amenity",  "parking")
-
+        if "covered"  in field_names: feat.setAttribute("covered",  dlg.covered  or None)
+        if "lit"      in field_names: feat.setAttribute("lit",      dlg.lit      or None)
+        if "access"   in field_names: feat.setAttribute("access",   dlg.access   or None)
+        
         # Aggiunge al layer
         self._layer.dataProvider().addFeatures([feat])
         self._layer.updateExtents()
