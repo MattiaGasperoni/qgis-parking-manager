@@ -46,7 +46,7 @@ from qgis.core import (
 
 from .map_tool_extent import RectangleMapTool
 from .layer_loader import load_geojson_to_layers
-from .add_remove_tools import AddParkingMapTool, RemoveParkingMapTool
+from .add_remove_tools import AddParkingMapTool, RemoveParkingMapTool, InfoParkingMapTool, InfoParkingDialog
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +254,7 @@ class ParcheggiDock(QgsDockWidget):
         # Map tool per aggiunta / rimozione parcheggi
         self._add_tool:    Optional[AddParkingMapTool]    = None
         self._remove_tool: Optional[RemoveParkingMapTool] = None
+        self._info_tool:   Optional[InfoParkingMapTool]   = None
 
         # Modalità di editing attiva ('add' | 'remove' | None)
         self._active_edit_mode = None
@@ -359,6 +360,14 @@ class ParcheggiDock(QgsDockWidget):
                 f"color: {_C['text']}; background-color: transparent;"
             )
             layout.addWidget(lbl)
+
+        layout.addSpacing(6)
+        self.btn_info = QPushButton("ℹ️  Info Parcheggio")
+        self.btn_info.setStyleSheet(_BTN_NEUTRAL)
+        self.btn_info.setEnabled(False)
+        self.btn_info.setToolTip("Clicca su un parcheggio sulla mappa per vederne i dettagli")
+        self.btn_info.clicked.connect(self._on_activate_info)
+        layout.addWidget(self.btn_info)
 
         return grp
 
@@ -554,7 +563,7 @@ class ParcheggiDock(QgsDockWidget):
 
         self._log("Caricamento in corso…")
         self.progress.setVisible(True)
-        self.progress.setRange(0, 0)   # spinner indeterminato
+        self.progress.setRange(0, 0) 
         self.btn_load.setEnabled(False)
         self.btn_browse.setEnabled(False)
 
@@ -579,6 +588,7 @@ class ParcheggiDock(QgsDockWidget):
             self.btn_select.setEnabled(True)
             self.btn_add.setEnabled(True)
             self.btn_remove.setEnabled(True)
+            self.btn_info.setEnabled(True)
 
             n_poly = self._layer_poly.featureCount()
             n_pts  = self._layer_pts.featureCount()
@@ -723,6 +733,46 @@ class ParcheggiDock(QgsDockWidget):
         )
         self._log("Strumento rimozione parcheggio attivato, in attesa del click sulla mappa…")
 
+    def _on_activate_info(self):
+        """Attiva o disattiva il tool di Info parcheggio sul canvas."""
+        if self._layer_pts is None and self._layer_poly is None:
+            return
+
+        # Se già attivo, annulla
+        if self._active_edit_mode == 'info':
+            self._on_edit_tool_finished()
+            return
+
+        self._active_edit_mode = 'info'
+
+        layers_to_search = [self._layer_pts, self._layer_poly]
+        self._prev_map_tool = self.canvas.mapTool()
+
+        self._info_tool = InfoParkingMapTool(self.canvas, layers_to_search)
+        self._info_tool.feature_identified.connect(self._on_feature_identified)
+        self._info_tool.tool_finished.connect(self._on_edit_tool_finished)
+        self.canvas.setMapTool(self._info_tool)
+
+        # Gestione visiva bottoni: lasciamo premuto Info e disattiviamo temporaneamente gli altri
+        self.btn_info.setStyleSheet(_BTN_BLUE) # Lo coloriamo di blu per far capire che è attivo
+        self.btn_add.setEnabled(False)
+        self.btn_remove.setEnabled(False)
+        self.btn_select.setEnabled(False)
+
+        self.btn_save.setEnabled(False)
+        self.btn_load.setEnabled(False)
+        self.btn_browse.setEnabled(False)
+        
+        self.lbl_edit_status.setText("Clicca su un parcheggio per leggerne i dati...")
+        self.lbl_edit_status.setStyleSheet(f"color: {_C['text']}; font-size: 10px; font-weight: bold;")
+        self._log("Strumento Info attivato, clicca sulla mappa.")
+
+    def _on_feature_identified(self, feat, layer_name):
+        """Apre il pop-up quando un parcheggio viene cliccato."""
+        # Non disattiviamo il tool, così l'utente può cliccare su un altro parcheggio subito dopo!
+        dlg = InfoParkingDialog(feat, layer_name, self.canvas.window())
+        dlg.show() # Usiamo show() invece di exec_() così non blocca QGIS
+
     def _on_feature_added(self, feat):
         """Callback dopo l'aggiunta riuscita di un parcheggio."""
         name = feat["name"] if "name" in self._layer_pts.fields().names() else ""
@@ -747,10 +797,22 @@ class ParcheggiDock(QgsDockWidget):
         """Ripristina il map tool precedente, resetta la modalità e riabilita i bottoni."""
         self._active_edit_mode = None
         self._restore_map_tool()
+
+        # Riabilita tutto
+        layer_exists = (self._layer_pts is not None or self._layer_poly is not None)
         self.btn_add.setEnabled(self._layer_pts is not None)
-        self.btn_remove.setEnabled(
-            self._layer_pts is not None or self._layer_poly is not None
-        )
+        self.btn_remove.setEnabled(layer_exists)
+        self.btn_select.setEnabled(layer_exists)
+
+        self.btn_save.setEnabled(layer_exists)
+        self.btn_browse.setEnabled(True)
+        # Riabilita "Carica Layer" solo se c'è un percorso file valido
+        self.btn_load.setEnabled(self._filepath != "")
+        
+        # Reset visivo del bottone Info
+        self.btn_info.setStyleSheet(_BTN_NEUTRAL)
+        self.btn_info.setEnabled(layer_exists)
+
         self.lbl_edit_status.setText("")
         self._log("")
 

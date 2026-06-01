@@ -612,3 +612,166 @@ class RemoveParkingMapTool(QgsMapTool):
     def _pixel_tolerance(self, pixels: int) -> float:
         mupp = self.canvas.mapUnitsPerPixel()
         return mupp * pixels
+    
+
+
+# ===========================================================================
+# Dialogo Info Parcheggio
+# ===========================================================================
+
+class InfoParkingDialog(QDialog):
+    """
+    Finestra di pop-up per mostrare tutti gli attributi di un parcheggio.
+    """
+    _BG        = "#f4f6f9"
+    _CARD_BG   = "#ffffff"
+    _BORDER    = "#dce3ec"
+    _TEXT      = "#1a1a2e"
+    _ACCENT    = "#2980b9"
+    _MUTED     = "#7f8c8d"
+
+    def __init__(self, feat: QgsFeature, layer_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Informazioni Parcheggio")
+        self.setMinimumWidth(320)
+        self.setModal(False) # Lasciamo False così l'utente può cliccare altrove tenendo aperto il popup
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self._BG};
+                color: {self._TEXT};
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 12px;
+            }}
+            QLabel {{ color: {self._TEXT}; }}
+            QLabel#title {{
+                font-size: 14px; font-weight: bold; color: {self._ACCENT};
+                border-bottom: 1px solid {self._BORDER}; padding-bottom: 5px;
+            }}
+            QLabel#key {{ font-weight: bold; color: {self._MUTED}; }}
+            QFrame#card {{
+                background-color: {self._CARD_BG};
+                border: 1px solid {self._BORDER};
+                border-radius: 8px;
+            }}
+            QPushButton {{
+                background-color: {self._ACCENT}; color: white;
+                border: none; border-radius: 6px; padding: 8px 16px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #1c5980; }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Intestazione
+        lbl_title = QLabel(f"📍 Dettagli ({layer_name})")
+        lbl_title.setObjectName("title")
+        layout.addWidget(lbl_title)
+
+        # Card con i dati
+        card = QFrame()
+        card.setObjectName("card")
+        form = QFormLayout(card)
+        form.setContentsMargins(12, 12, 12, 12)
+        form.setSpacing(8)
+
+        # Iteriamo su tutti gli attributi della feature
+        for field in feat.fields():
+            val = feat[field.name()]
+            # Ignora i campi completamente vuoti per mantenere il popup pulito
+            if val is None or str(val).strip() == "" or str(val) == "NULL":
+                continue
+                
+            lbl_key = QLabel(f"{field.name().capitalize()}:")
+            lbl_key.setObjectName("key")
+            
+            lbl_val = QLabel(str(val))
+            lbl_val.setWordWrap(True)
+            
+            form.addRow(lbl_key, lbl_val)
+
+        layout.addWidget(card)
+
+        # Bottone chiudi
+        btn_close = QPushButton("Chiudi")
+        btn_close.clicked.connect(self.accept)
+        
+        hb_btn = QHBoxLayout()
+        hb_btn.addStretch()
+        hb_btn.addWidget(btn_close)
+        layout.addLayout(hb_btn)
+
+
+# ===========================================================================
+# Map Tool — Info Parcheggio
+# ===========================================================================
+
+class InfoParkingMapTool(QgsMapTool):
+    """
+    Strumento mappa per identificare un parcheggio cliccandoci sopra.
+    """
+    feature_identified = pyqtSignal(object, str)  # (QgsFeature, nome_layer)
+    tool_finished = pyqtSignal()
+
+    def __init__(self, canvas, layers: list):
+        super().__init__(canvas)
+        self.canvas = canvas
+        self._layers = [lyr for lyr in layers if lyr is not None]
+        # Usa il cursore col punto interrogativo tipico del tasto "Info"
+        self.setCursor(Qt.WhatsThisCursor) 
+
+    def canvasPressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            return
+
+        valid_layers = [l for l in self._layers if l.isValid()]
+        if not valid_layers:
+            self.tool_finished.emit()
+            return
+
+        tolerance = self._pixel_tolerance(15)
+        click_pt_canvas = self.toMapCoordinates(event.pos())
+        canvas_crs = self.canvas.mapSettings().destinationCrs()
+
+        best_feat = None
+        best_layer = None
+        min_dist = float('inf')
+
+        for layer in valid_layers:
+            layer_crs = layer.crs()
+            click_pt = click_pt_canvas
+
+            if canvas_crs != layer_crs:
+                transform = QgsCoordinateTransform(canvas_crs, layer_crs, QgsProject.instance())
+                click_pt = transform.transform(click_pt_canvas)
+
+            click_geom = QgsGeometry.fromPointXY(click_pt)
+            search_rect = click_geom.buffer(tolerance, 5).boundingBox()
+
+            request = QgsFeatureRequest().setFilterRect(search_rect)
+            
+            for feat in layer.getFeatures(request):
+                dist = feat.geometry().distance(click_geom)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_feat = feat
+                    best_layer = layer
+
+        if best_feat:
+            # Emette il segnale passando la feature trovata e il nome del layer ("Punti" o "Poligoni")
+            layer_type = "Poligono" if best_layer.geometryType() == QgsWkbTypes.PolygonGeometry else "Punto"
+            self.feature_identified.emit(best_feat, layer_type)
+        else:
+            self.tool_finished.emit() # Cliccato a vuoto
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.tool_finished.emit()
+
+    def deactivate(self):
+        super().deactivate()
+
+    def _pixel_tolerance(self, pixels: int) -> float:
+        return self.canvas.mapUnitsPerPixel() * pixels
