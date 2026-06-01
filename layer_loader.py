@@ -16,6 +16,7 @@ Responsabilità:
 from typing import Tuple, List, Dict, Any
 
 from qgis.core import (
+    QgsRuleBasedRenderer,
     QgsVectorLayer,
     QgsFeature,
     QgsGeometry,
@@ -59,7 +60,9 @@ FEE_STYLE: Dict[str, Tuple[str, str, str]] = {
     # Nessun valore specificato → grigio
     "_none": ("#95a5a6", "#7f8c8d", "Non specificato"),
 }
-
+# Colori specifici per i camper (se presenti nel dataset)
+MOTORHOME_COLOR     = "#9b59b6"   # viola
+MOTORHOME_BORDER    = "#7d3c98"
 
 # ===========================================================================
 # Parsing del GeoJSON
@@ -108,7 +111,6 @@ def parse_geojson(
 
     return points, polygons, others
 
-
 # ===========================================================================
 # Costruzione layer in memoria
 # ===========================================================================
@@ -131,7 +133,18 @@ def _collect_fields(features: List[Dict]) -> QgsFields:
             if k not in seen:
                 all_keys.append(k)
                 seen.add(k)
-
+    
+    # Garantiamo che i campi usati dalla finestra "Aggiungi Parcheggio" 
+    # esistano sempre nel layer QGIS, anche se mancanti nel GeoJSON originario
+    standard_fields = [
+        "name", "fee", "capacity", "surface", 
+        "amenity", "covered", "lit", "access", "motorhome"
+    ]
+    for sf in standard_fields:
+        if sf not in seen:
+            all_keys.append(sf)
+            seen.add(sf)
+            
     # Inferisce il tipo per ogni campo
     fields = QgsFields()
     for key in all_keys:
@@ -370,89 +383,57 @@ def reproject_layer(
 # ===========================================================================
 
 def apply_fee_symbology(layer: QgsVectorLayer) -> None:
-    """
-    Applica una simbologia categorizzata basata sul campo ``fee``
-    sia ai layer poligonali (QgsFillSymbol) che puntuali (QgsMarkerSymbol).
-
-    Classi:
-      - ``yes``       → rosso     (#e74c3c)
-      - ``no``        → verde     (#27ae60)
-      - valori orario → arancione (#f39c12)
-      - vuoto/None    → grigio    (#95a5a6)
-
-    :param layer: Layer vettoriale poligonale o puntuale già caricato.
-    """
-    if "fee" not in [f.name() for f in layer.fields()]:
-        return  # Campo assente: nessuna simbologia
-
-    # Determina se il layer è puntuale o poligonale
     is_point = layer.geometryType() == QgsWkbTypes.PointGeometry
 
-    # Raccoglie i valori distinti di 'fee' presenti nel layer
-    fee_values = set()
-    for feat in layer.getFeatures():
-        val = feat["fee"]
-        if val and str(val).strip():
-            fee_values.add(str(val).strip())
-
-    categories: List[QgsRendererCategory] = []
-
-    for val in sorted(fee_values):
-        val_lower = val.lower()
-
-        if val_lower == "yes":
-            style_key = "yes"
-        elif val_lower == "no":
-            style_key = "no"
-        else:
-            style_key = "_cond"
-
-        color_hex, border_hex, label = FEE_STYLE[style_key]
-
+    def _make_sym(color, border):
         if is_point:
-            sym = QgsMarkerSymbol.createSimple({
-                "name":          "circle",
-                "color":         color_hex,
-                "color_border":  border_hex,
-                "size":          "3.0",
-                "outline_width": "0.4",
+            return QgsMarkerSymbol.createSimple({
+                "name": "circle", "color": color,
+                "color_border": border, "size": "3.0", "outline_width": "0.4",
             })
         else:
-            sym = QgsFillSymbol.createSimple({
-                "color":        color_hex,
-                "color_border": border_hex,
-                "width_border": "0.4",
-                "style":        "solid",
+            return QgsFillSymbol.createSimple({
+                "color": color, "color_border": border,
+                "width_border": "0.4", "style": "solid",
             })
 
-        legend_label = f"{val} — {label.split('(')[0].strip()}"
-        categories.append(QgsRendererCategory(val, sym, legend_label))
+    # Regola radice (obbligatoria per QgsRuleBasedRenderer)
+    root = QgsRuleBasedRenderer.Rule(None)
 
-    # Categoria per valori nulli / non specificati
-    null_color, null_border, null_label = FEE_STYLE["_none"]
+    # 1. Camper ammessi → viola (priorità massima: ELSE sotto non la tocca)
+    r_camper = QgsRuleBasedRenderer.Rule(_make_sym("#9b59b6", "#7d3c98"))
+    r_camper.setFilterExpression('"motorhome" = \'yes\'')
+    r_camper.setLabel("Camper ammessi")
+    root.appendChild(r_camper)
 
-    if is_point:
-        null_sym = QgsMarkerSymbol.createSimple({
-            "name":          "circle",
-            "color":         null_color,
-            "color_border":  null_border,
-            "size":          "3.0",
-            "outline_width": "0.3",
-        })
-    else:
-        null_sym = QgsFillSymbol.createSimple({
-            "color":        null_color,
-            "color_border": null_border,
-            "width_border": "0.3",
-            "style":        "solid",
-        })
+    # 2. A pagamento → rosso
+    r_yes = QgsRuleBasedRenderer.Rule(_make_sym("#e74c3c", "#c0392b"))
+    r_yes.setFilterExpression('"fee" = \'yes\' AND ("motorhome" IS NULL OR "motorhome" != \'yes\')')
+    r_yes.setLabel("A pagamento")
+    root.appendChild(r_yes)
 
-    categories.append(
-        QgsRendererCategory("", null_sym, null_label)
+    # 3. Gratuito → verde
+    r_no = QgsRuleBasedRenderer.Rule(_make_sym("#27ae60", "#1e8449"))
+    r_no.setFilterExpression('"fee" = \'no\' AND ("motorhome" IS NULL OR "motorhome" != \'yes\')')
+    r_no.setLabel("Gratuito")
+    root.appendChild(r_no)
+
+    # 4. Condizionale → arancione
+    r_cond = QgsRuleBasedRenderer.Rule(_make_sym("#f39c12", "#d68910"))
+    r_cond.setFilterExpression(
+        '"fee" IS NOT NULL AND "fee" != \'\' AND "fee" != \'yes\' AND "fee" != \'no\' '
+        'AND ("motorhome" IS NULL OR "motorhome" != \'yes\')'
     )
+    r_cond.setLabel("Condizionale / Orario")
+    root.appendChild(r_cond)
 
-    renderer = QgsCategorizedSymbolRenderer("fee", categories)
-    layer.setRenderer(renderer)
+    # 5. Non specificato → grigio (ELSE)
+    r_none = QgsRuleBasedRenderer.Rule(_make_sym("#95a5a6", "#7f8c8d"))
+    r_none.setIsElse(True)
+    r_none.setLabel("Non specificato")
+    root.appendChild(r_none)
+
+    layer.setRenderer(QgsRuleBasedRenderer(root))
     layer.triggerRepaint()
 
 # ===========================================================================

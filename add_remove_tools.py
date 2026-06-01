@@ -32,6 +32,7 @@ from qgis.PyQt.QtWidgets import (
 
 from qgis.gui import QgsMapTool, QgsVertexMarker
 from qgis.core import (
+    QgsWkbTypes,
     QgsVectorLayer,
     QgsFeature,
     QgsGeometry,
@@ -287,6 +288,12 @@ class AddParkingDialog(QDialog):
         self.combo_lit.addItem("🌑  Non illuminato",    "no")
         form3.addRow("Illuminazione:", self.combo_lit)
 
+        self.combo_motorhome = QComboBox()
+        self.combo_motorhome.addItem("— Non specificato —", "")
+        self.combo_motorhome.addItem("🚐  Sì, ammessi",      "yes")
+        self.combo_motorhome.addItem("🚫  Non ammessi",       "no")
+        form3.addRow("Camper ammessi:", self.combo_motorhome)
+
         root.addWidget(card3)
 
         # ── Bottoni ─────────────────────────────────────────────────
@@ -369,6 +376,10 @@ class AddParkingDialog(QDialog):
     @property
     def access(self) -> str:
         return self.combo_access.currentData()
+    
+    @property
+    def motorhome(self) -> str:
+        return self.combo_motorhome.currentData()
 
 # ===========================================================================
 # Map Tool — Aggiunta parcheggio
@@ -409,7 +420,7 @@ class AddParkingMapTool(QgsMapTool):
         self._marker.setIconSize(12)
         self._marker.setPenWidth(2)
         self._marker.hide()
-
+        
     def canvasMoveEvent(self, event):
         """Mostra il marker nella posizione del cursore."""
         pt = self.toMapCoordinates(event.pos())
@@ -463,7 +474,8 @@ class AddParkingMapTool(QgsMapTool):
         if "covered"  in field_names: feat.setAttribute("covered",  dlg.covered  or None)
         if "lit"      in field_names: feat.setAttribute("lit",      dlg.lit      or None)
         if "access"   in field_names: feat.setAttribute("access",   dlg.access   or None)
-        
+        if "motorhome" in field_names: feat.setAttribute("motorhome", dlg.motorhome or None)
+
         # Aggiunge al layer
         self._layer.dataProvider().addFeatures([feat])
         self._layer.updateExtents()
@@ -489,101 +501,91 @@ class AddParkingMapTool(QgsMapTool):
 # Map Tool — Rimozione parcheggio
 # ===========================================================================
 
+# ===========================================================================
+# Map Tool — Rimozione parcheggio (Punti e Poligoni)
+# ===========================================================================
+
 class RemoveParkingMapTool(QgsMapTool):
     """
     Strumento mappa per rimuovere un parcheggio cliccandoci sopra.
-
-    Al click sinistro:
-      1. Cerca la feature più vicina al punto cliccato (entro una
-         tolleranza di 20 pixel canvas)
-      2. Chiede conferma all'utente
-      3. Elimina la feature dal layer
-
-    Funziona su entrambi i layer (punti e poligoni): il layer da
-    interrogare viene passato come parametro e può essere cambiato
-    dall'esterno tramite ``set_target_layer()``.
-
-    Signals:
-        feature_removed (str): emesso dopo la rimozione, con il nome
-                               del parcheggio eliminato
-        tool_finished: emesso quando l'utente preme Escape
+    Funziona sia sui punti che sui poligoni.
     """
 
     feature_removed = pyqtSignal(str)
     tool_finished = pyqtSignal()
 
-    def __init__(self, canvas, layer: QgsVectorLayer):
+    def __init__(self, canvas, layers: list):
         super().__init__(canvas)
         self.canvas = canvas
-        self._layer = layer
+        # Filtriamo eventuali layer None (es. se uno dei due non è caricato)
+        self._layers = [lyr for lyr in layers if lyr is not None]
         self.setCursor(Qt.PointingHandCursor)
-
-    def set_target_layer(self, layer: QgsVectorLayer):
-        """Cambia il layer su cui agisce lo strumento."""
-        self._layer = layer
 
     def canvasPressEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
 
-        try:
-            _ = self._layer.isValid()
-        except RuntimeError:
+        valid_layers = [l for l in self._layers if l.isValid()]
+        if not valid_layers:
             QMessageBox.warning(
                 self.canvas.window(), "Errore",
-                "Il layer non è più disponibile.\nRicarica il GeoJSON."
+                "I layer non sono più disponibili.\nRicarica il GeoJSON."
             )
             self.tool_finished.emit()
             return
 
-        # Calcola la tolleranza di ricerca in unità mappa
-        # (equivalente a ~20 pixel sul canvas)
         tolerance = self._pixel_tolerance(20)
-
-        click_pt = self.toMapCoordinates(event.pos())
-
-        # Riproietta nel CRS del layer se necessario
+        click_pt_canvas = self.toMapCoordinates(event.pos())
         canvas_crs = self.canvas.mapSettings().destinationCrs()
-        layer_crs = self._layer.crs()
-        if canvas_crs != layer_crs:
-            transform = QgsCoordinateTransform(
-                canvas_crs, layer_crs, QgsProject.instance()
-            )
-            click_pt = transform.transform(click_pt)
 
-        # Cerca feature nell'area di tolleranza
-        search_rect = QgsGeometry.fromPointXY(click_pt).buffer(
-            tolerance, 5
-        ).boundingBox()
+        best_feat = None
+        best_layer = None
+        min_dist = float('inf')
 
-        request = QgsFeatureRequest().setFilterRect(search_rect)
-        candidates = list(self._layer.getFeatures(request))
+        # Cerca il parcheggio più vicino esplorando TUTTI i layer forniti
+        for layer in valid_layers:
+            layer_crs = layer.crs()
+            click_pt = click_pt_canvas
 
-        if not candidates:
+            # Riproietta se necessario
+            if canvas_crs != layer_crs:
+                transform = QgsCoordinateTransform(canvas_crs, layer_crs, QgsProject.instance())
+                click_pt = transform.transform(click_pt_canvas)
+
+            click_geom = QgsGeometry.fromPointXY(click_pt)
+            search_rect = click_geom.buffer(tolerance, 5).boundingBox()
+
+            request = QgsFeatureRequest().setFilterRect(search_rect)
+            
+            for feat in layer.getFeatures(request):
+                # La distanza da un punto DENTRO un poligono è 0.0
+                dist = feat.geometry().distance(click_geom)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_feat = feat
+                    best_layer = layer
+
+        if not best_feat:
             QMessageBox.information(
                 self.canvas.window(),
                 "Nessun parcheggio trovato",
                 "Nessun parcheggio trovato in prossimità del punto cliccato.\n"
-                "Prova a cliccare più vicino al centro del parcheggio.",
+                "Prova a cliccare più vicino al centro o all'interno del poligono.",
             )
             return
 
-        # Se più candidati, prende il più vicino al punto cliccato
-        click_geom = QgsGeometry.fromPointXY(click_pt)
-        feat = min(
-            candidates,
-            key=lambda f: f.geometry().distance(click_geom)
-        )
-
         # Nome da mostrare nella conferma
-        name_val = feat["name"] if "name" in self._layer.fields().names() else None
-        display_name = str(name_val) if name_val else f"ID {feat.id()}"
+        name_val = best_feat["name"] if "name" in best_layer.fields().names() else None
+        display_name = str(name_val) if name_val else f"ID {best_feat.id()}"
+        
+        # Capisce se stiamo per cancellare un poligono o un punto per renderlo chiaro all'utente
+        geom_type = "Poligonale" if best_layer.geometryType() == QgsWkbTypes.PolygonGeometry else "Puntuale"
 
         # Chiede conferma
         reply = QMessageBox.question(
             self.canvas.window(),
             "Conferma rimozione",
-            f"Vuoi rimuovere il parcheggio:\n\n"
+            f"Vuoi rimuovere il parcheggio <b>{geom_type}</b>:\n\n"
             f"  📍 {display_name}\n\n"
             f"L'operazione non è reversibile.",
             QMessageBox.Yes | QMessageBox.No,
@@ -593,12 +595,12 @@ class RemoveParkingMapTool(QgsMapTool):
         if reply != QMessageBox.Yes:
             return
 
-        # Elimina la feature
-        self._layer.dataProvider().deleteFeatures([feat.id()])
-        self._layer.updateExtents()
-        self._layer.triggerRepaint()
+        # Elimina la feature dal layer corretto in cui è stata trovata
+        best_layer.dataProvider().deleteFeatures([best_feat.id()])
+        best_layer.updateExtents()
+        best_layer.triggerRepaint()
 
-        self.feature_removed.emit(display_name)
+        self.feature_removed.emit(f"{display_name} ({geom_type})")
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -608,6 +610,5 @@ class RemoveParkingMapTool(QgsMapTool):
         super().deactivate()
 
     def _pixel_tolerance(self, pixels: int) -> float:
-        """Converte N pixel in unità mappa in base alla scala corrente."""
         mupp = self.canvas.mapUnitsPerPixel()
         return mupp * pixels

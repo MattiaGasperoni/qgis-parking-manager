@@ -345,12 +345,14 @@ class ParcheggiDock(QgsDockWidget):
         self.lbl_fee_yes    = QLabel("Parcheggi a pagamento: —")
         self.lbl_fee_no     = QLabel("Parcheggi gratuiti: —")
         self.lbl_fee_cond   = QLabel("Parcheggi con condizioni: —")
+        self.lbl_motorhome  = QLabel("Parcheggi per camper: —")
         self.lbl_fee_none   = QLabel("Parcheggi senza informazioni: —")
 
         for lbl in (
             self.lbl_poly_count, self.lbl_pts_count,
             self.lbl_fee_yes, self.lbl_fee_no,
             self.lbl_fee_cond, self.lbl_fee_none,
+            self.lbl_motorhome,
         ):
             lbl.setStyleSheet(
                 f"font-size: 11px; padding: 2px 4px; "
@@ -482,11 +484,13 @@ class ParcheggiDock(QgsDockWidget):
         cards_row = QHBoxLayout()
         cards_row.setSpacing(8)
 
-        self.card_count    = _ResultCard("Parcheggi", "🅿")
-        self.card_capacity = _ResultCard("Posti auto", "🚗")
-
+        self.card_count     = _ResultCard("Parcheggi", "🅿")
+        self.card_capacity  = _ResultCard("Posti auto", "🚗")
+        self.card_motorhome = _ResultCard("Camper", "🚐")
+    
         cards_row.addWidget(self.card_count)
         cards_row.addWidget(self.card_capacity)
+        cards_row.addWidget(self.card_motorhome)
         layout.addLayout(cards_row)
 
         # Dettaglio testuale
@@ -610,11 +614,18 @@ class ParcheggiDock(QgsDockWidget):
         n_poly = self._layer_poly.featureCount()
         n_pts  = self._layer_pts.featureCount() if self._layer_pts else 0
 
-        fee_yes = fee_no = fee_cond = fee_none = 0
+        fee_yes = fee_no = fee_cond = fee_none = motorhome_count = 0
+        
+        # Controlliamo una volta sola fuori dal ciclo se il campo motorhome esiste
+        fields_names = self._layer_poly.fields().names()
+        has_motorhome_field = "motorhome" in fields_names
+
         for feat in self._layer_poly.getFeatures():
+            # 1. Gestione Tariffe (FEE)
             val     = feat["fee"]
             v       = str(val).strip()
             v_lower = v.lower()
+            
             if v_lower == "yes":
                 fee_yes += 1
             elif v_lower == "no":
@@ -624,25 +635,26 @@ class ParcheggiDock(QgsDockWidget):
             else:
                 fee_none += 1
 
+            # 2. Gestione Camper (Indipendente dalle tariffe)
+            if has_motorhome_field:
+                m_val = str(feat["motorhome"]).lower().strip()
+                if m_val in ("yes", "si", "sì"):
+                    motorhome_count += 1
+
+        # Aggiornamento Label
         self.lbl_poly_count.setText(f"Parcheggi Poligonali caricati:  <b>{n_poly}</b>")
         self.lbl_pts_count.setText(f"Punti di Parcheggio caricati: <b>{n_pts}</b>")
-        self.lbl_fee_yes.setText(
-            f"Parcheggi a pagamento <span style='color:red'>■</span>:  <b>{fee_yes}</b>"
-        )
-        self.lbl_fee_no.setText(
-            f"Parcheggi gratuiti <span style='color:green'>■</span>:   <b>{fee_no}</b>"
-        )
-        self.lbl_fee_cond.setText(
-            f"Parcheggi con condizioni <span style='color:orange'>■</span>: <b>{fee_cond}</b>"
-        )
-        self.lbl_fee_none.setText(
-            f"Parcheggi senza informazioni <span style='color:gray'>■</span>: <b>{fee_none}</b>"
-        )
+        self.lbl_fee_yes.setText(f"Parcheggi a pagamento <span style='color:red'>■</span>:  <b>{fee_yes}</b>")
+        self.lbl_fee_no.setText(f"Parcheggi gratuiti <span style='color:green'>■</span>:   <b>{fee_no}</b>")
+        self.lbl_fee_cond.setText(f"Parcheggi con condizioni <span style='color:orange'>■</span>: <b>{fee_cond}</b>")
+        self.lbl_motorhome.setText(f"Camper ammessi <span style='color:#9b59b6'>■</span>: <b>{motorhome_count}</b>")        
+        self.lbl_fee_none.setText(f"Parcheggi senza informazioni <span style='color:gray'>■</span>: <b>{fee_none}</b>")
 
+        # Applicazione del formato RichText a TUTTE le label (inclusa lbl_motorhome)
         for lbl in (
             self.lbl_poly_count, self.lbl_pts_count,
             self.lbl_fee_yes, self.lbl_fee_no,
-            self.lbl_fee_cond, self.lbl_fee_none,
+            self.lbl_fee_cond, self.lbl_motorhome, self.lbl_fee_none,
         ):
             lbl.setTextFormat(Qt.RichText)
 
@@ -691,10 +703,11 @@ class ParcheggiDock(QgsDockWidget):
 
         self._active_edit_mode = 'remove'
 
-        target = self._layer_pts if self._layer_pts else self._layer_poly
+        # Passiamo ENTRAMBI i layer allo strumento
+        layers_to_edit = [self._layer_pts, self._layer_poly]
         self._prev_map_tool = self.canvas.mapTool()
 
-        self._remove_tool = RemoveParkingMapTool(self.canvas, target)
+        self._remove_tool = RemoveParkingMapTool(self.canvas, layers_to_edit)
         self._remove_tool.feature_removed.connect(self._on_feature_removed)
         self._remove_tool.tool_finished.connect(self._on_edit_tool_finished)
         self.canvas.setMapTool(self._remove_tool)
@@ -859,6 +872,7 @@ class ParcheggiDock(QgsDockWidget):
         self._restore_map_tool()
         self.card_count.reset()
         self.card_capacity.reset()
+        self.card_motorhome.reset()
         self.lbl_detail.setText("")
         self.lbl_tool_status.setText("")
         
@@ -903,6 +917,7 @@ class ParcheggiDock(QgsDockWidget):
         total_capacity   = 0
         capacity_missing = 0
         fee_breakdown    = {"yes": 0, "no": 0, "conditional": 0, "unknown": 0}
+        motorhome_count = 0
 
         # Iteriamo su tutti i layer disponibili (poligoni e punti)
         for layer in layers_to_analyze:
@@ -923,6 +938,10 @@ class ParcheggiDock(QgsDockWidget):
 
             for feat in layer.getFeatures(request):
                 count_parking += 1
+
+                mh_val = feat.attribute("motorhome") if "motorhome" in feat.fields().names() else None
+                if str(mh_val).lower() == "yes":
+                    motorhome_count += 1
 
                 # Gestione Capacity
                 cap_val = feat.attribute("capacity") if "capacity" in feat.fields().names() else None
@@ -947,16 +966,16 @@ class ParcheggiDock(QgsDockWidget):
                     else:
                         fee_breakdown["conditional"] += 1
 
-        self._display_results(count_parking, total_capacity, capacity_missing, fee_breakdown)
+        self._display_results(count_parking, total_capacity, capacity_missing, fee_breakdown, motorhome_count)
 
-    def _display_results(self, count: int, capacity: int, cap_missing: int, fee_breakdown: dict):
+    def _display_results(self, count: int, capacity: int, cap_missing: int, fee_breakdown: dict, motorhome_count: int):
         """
         Aggiorna i widget di risultato con i valori dell'analisi,
         utilizzando lo stesso stile della sezione informativa.
         """
         self.card_count.set_value(count)
         self.card_capacity.set_value(capacity if capacity > 0 else "N/D")
-
+        self.card_motorhome.set_value(motorhome_count)
         detail_parts = []
         if fee_breakdown["yes"]:
             detail_parts.append(
@@ -969,6 +988,10 @@ class ParcheggiDock(QgsDockWidget):
         if fee_breakdown["conditional"]:
             detail_parts.append(
                 f"Parcheggi con condizioni <span style='color:orange'>■</span>: <b>{fee_breakdown['conditional']}</b>"
+            )
+        if motorhome_count:
+            detail_parts.append(
+                f"Camper ammessi <span style='color:#9b59b6'>■</span>: <b>{motorhome_count}</b>"
             )
         if fee_breakdown["unknown"]:
             detail_parts.append(
