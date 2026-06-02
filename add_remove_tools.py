@@ -2,16 +2,25 @@
 """
 add_remove_tools.py
 -------------------
-Strumenti mappa e dialogo per aggiungere e rimuovere parcheggi
-direttamente dalla mappa interattiva.
+Modulo per la gestione interattiva dei parcheggi (punti e poligoni) direttamente 
+sul canvas di QGIS. Fornisce strumenti mappa personalizzati (QgsMapTool) e 
+finestre di dialogo (QDialog) per le operazioni di aggiunta, rimozione e consultazione.
 
-Classi:
-  - AddParkingDialog    → finestra di dialogo per inserire gli attributi
-                          del nuovo parcheggio (name, fee, capacity, surface)
-  - AddParkingMapTool   → strumento mappa: click sinistro sul canvas
-                          aggiunge un punto nel layer punti
-  - RemoveParkingMapTool → strumento mappa: click sinistro sul canvas
-                           rimuove la feature più vicina al punto cliccato
+Interfacce di Dialogo
+--------------------------
+  • AddParkingDialog   : Finestra modale per l'inserimento guidato degli attributi di un 
+                         nuovo parcheggio (nome, capacità, superficie, tariffe, ecc.).
+  • InfoParkingDialog  : Popup non modale che mostra in modo formattato tutti gli 
+                         attributi valorizzati di una specifica feature cliccata.
+
+Strumenti Mappa
+---------------------------
+  • AddParkingMapTool    : Click sinistro sul canvas per aggiungere una nuova feature 
+                           puntuale (apre AddParkingDialog per valorizzare gli attributi).
+  • RemoveParkingMapTool : Click sinistro sul canvas per eliminare il parcheggio 
+                           (punto o poligono) più vicino al cursore, previa conferma.
+  • InfoParkingMapTool   : Click sinistro sul canvas per interrogare e identificare 
+                           il parcheggio più vicino, emettendo i dati per l'interfaccia.
 """
 
 from qgis.PyQt.QtCore import Qt, pyqtSignal
@@ -501,10 +510,6 @@ class AddParkingMapTool(QgsMapTool):
 # Map Tool — Rimozione parcheggio
 # ===========================================================================
 
-# ===========================================================================
-# Map Tool — Rimozione parcheggio (Punti e Poligoni)
-# ===========================================================================
-
 class RemoveParkingMapTool(QgsMapTool):
     """
     Strumento mappa per rimuovere un parcheggio cliccandoci sopra.
@@ -613,7 +618,6 @@ class RemoveParkingMapTool(QgsMapTool):
         mupp = self.canvas.mapUnitsPerPixel()
         return mupp * pixels
     
-
 
 # ===========================================================================
 # Dialogo Info Parcheggio

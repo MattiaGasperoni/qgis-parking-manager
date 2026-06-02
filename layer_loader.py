@@ -1,16 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-layer_loader.py
----------------
-Funzioni di utilità per il caricamento e la preparazione dei layer
-a partire da un file GeoJSON di parcheggi.
-
-Responsabilità:
-  - parse_geojson()          → separa feature per tipo geometria
-  - build_memory_layer()     → crea un QgsVectorLayer in memoria
-  - apply_fee_symbology()    → simbologia categorizzata sull'attributo 'fee'
-  - apply_name_labels()      → etichette automatiche con il campo 'name'
-  - load_geojson_to_layers() → funzione di alto livello che orchestra tutto
+layer_loader.py — Caricamento e preparazione dei layer da GeoJSON.
+Espone parse_geojson, build_memory_layer, apply_fee_symbology,
+apply_name_labels e load_geojson_to_layers (funzione di alto livello).
 """
 
 from typing import Tuple, List, Dict, Any
@@ -26,13 +18,11 @@ from qgis.core import (
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
-    # Simbologia
     QgsCategorizedSymbolRenderer,
     QgsRendererCategory,
     QgsSymbol,
     QgsFillSymbol,
     QgsMarkerSymbol,
-    # Etichette
     QgsPalLayerSettings,
     QgsVectorLayerSimpleLabeling,
     QgsTextFormat,
@@ -43,7 +33,7 @@ from qgis.PyQt.QtGui import QColor, QFont
 
 # CRS sorgente dei file GeoJSON (standard RFC 7946)
 CRS_SOURCE = "EPSG:4326"
-# CRS di destinazione richiesto dal corso — Monte Mario / Italy Zone 2
+# CRS di destinazione — Monte Mario / Italy Zone 2
 CRS_TARGET = "EPSG:3004"
 
 
@@ -55,14 +45,12 @@ CRS_TARGET = "EPSG:3004"
 FEE_STYLE: Dict[str, Tuple[str, str, str]] = {
     "yes":   ("#e74c3c", "#c0392b", "A pagamento (fee=yes)"),
     "no":    ("#27ae60", "#1e8449", "Gratuito (fee=no)"),
-    # Valori condizionali (orari) → arancione
     "_cond": ("#f39c12", "#d68910", "Condizionale / Orario"),
-    # Nessun valore specificato → grigio
     "_none": ("#95a5a6", "#7f8c8d", "Non specificato"),
 }
-# Colori specifici per i camper (se presenti nel dataset)
-MOTORHOME_COLOR     = "#9b59b6"   # viola
-MOTORHOME_BORDER    = "#7d3c98"
+MOTORHOME_COLOR  = "#9b59b6"
+MOTORHOME_BORDER = "#7d3c98"
+
 
 # ===========================================================================
 # Parsing del GeoJSON
@@ -72,16 +60,8 @@ def parse_geojson(
     filepath: str,
 ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
     """
-    Legge un file GeoJSON e suddivide le feature per tipo geometrico.
-
-    Restituisce tre liste di dizionari GeoJSON feature:
-      - ``points``   : Point (singolo punto — ingressi, stalli)
-      - ``polygons`` : Polygon e MultiPolygon (aree parcheggio)
-      - ``others``   : LineString e altri tipi non gestiti
-
-    :param filepath: Percorso assoluto al file .geojson
-    :raises FileNotFoundError: se il file non esiste
-    :raises ValueError:        se il JSON non è una FeatureCollection valida
+    Legge il GeoJSON e suddivide le feature in tre liste:
+    punti, poligoni/multipoligoni e altri tipi geometrici.
     """
     import json
 
@@ -111,21 +91,17 @@ def parse_geojson(
 
     return points, polygons, others
 
+
 # ===========================================================================
 # Costruzione layer in memoria
 # ===========================================================================
 
 def _collect_fields(features: List[Dict]) -> QgsFields:
     """
-    Analizza le proprietà di tutte le feature e costruisce uno schema
-    di campi QgsFields con i tipi più appropriati.
-
-    Regole di tipo inferenza:
-      - Se tutti i valori non-nulli sono interi → QVariant.Int
-      - Se tutti sono numerici (float) → QVariant.Double
-      - Altrimenti → QVariant.String
+    Inferisce lo schema dei campi (Int / Double / String) analizzando
+    le proprietà di tutte le feature. Garantisce sempre la presenza
+    dei campi standard usati dal dialogo di aggiunta parcheggio.
     """
-    # Raccoglie tutti i nomi dei campi presenti nel dataset
     all_keys: List[str] = []
     seen: set = set()
     for feat in features:
@@ -133,19 +109,17 @@ def _collect_fields(features: List[Dict]) -> QgsFields:
             if k not in seen:
                 all_keys.append(k)
                 seen.add(k)
-    
-    # Garantiamo che i campi usati dalla finestra "Aggiungi Parcheggio" 
-    # esistano sempre nel layer QGIS, anche se mancanti nel GeoJSON originario
+
+    # Campi standard sempre presenti nel layer QGIS
     standard_fields = [
-        "name", "fee", "capacity", "surface", 
+        "name", "fee", "capacity", "surface",
         "amenity", "covered", "lit", "access", "motorhome"
     ]
     for sf in standard_fields:
         if sf not in seen:
             all_keys.append(sf)
             seen.add(sf)
-            
-    # Inferisce il tipo per ogni campo
+
     fields = QgsFields()
     for key in all_keys:
         values = [
@@ -175,28 +149,23 @@ def _collect_fields(features: List[Dict]) -> QgsFields:
         except (TypeError, ValueError):
             pass
 
-        # Default: stringa
         fields.append(QgsField(key, QVariant.String))
 
     return fields
 
 
-def extract_features_and_create_layer(features: List[Dict], layer_name: str, geometry_type: str, crs: str = "EPSG:4326",) -> QgsVectorLayer:
+def extract_features_and_create_layer(
+    features: List[Dict],
+    layer_name: str,
+    geometry_type: str,
+    crs: str = "EPSG:4326",
+) -> QgsVectorLayer:
     """
-    Crea un QgsVectorLayer in memoria a partire da una lista di
-    feature GeoJSON dizionario.
-
-    :param features:      Lista di dizionari feature GeoJSON
-    :param layer_name:    Nome visualizzato nel pannello layer di QGIS
-    :param geometry_type: Tipo geometria per la URI ("Point", "Polygon",
-                          "MultiPolygon", …)
-    :param crs:           Codice EPSG del sistema di riferimento
-    :returns:             Layer vettoriale in memoria, già popolato
-    :raises RuntimeError: se il layer non viene creato correttamente
+    Crea un QgsVectorLayer in memoria popolato con le feature GeoJSON fornite.
+    Converte le geometrie in WKT e assegna gli attributi rispettando i tipi inferiti.
     """
     import json
 
-    # Usa MultiPolygon per accogliere sia Polygon che MultiPolygon
     uri = f"{geometry_type}?crs={crs}"
     layer = QgsVectorLayer(uri, layer_name, "memory")
 
@@ -205,13 +174,11 @@ def extract_features_and_create_layer(features: List[Dict], layer_name: str, geo
             f"Impossibile creare il layer in memoria '{layer_name}'."
         )
 
-    # --- Schema dei campi ---
     fields = _collect_fields(features)
     provider = layer.dataProvider()
     provider.addAttributes(fields)
     layer.updateFields()
 
-    # --- Aggiunge le feature ---
     qgs_features: List[QgsFeature] = []
     for raw_feat in features:
         qf = QgsFeature(layer.fields())
@@ -233,7 +200,6 @@ def extract_features_and_create_layer(features: List[Dict], layer_name: str, geo
             if val is None:
                 qf.setAttribute(fname, None)
             else:
-                # Conversione al tipo dichiarato del campo
                 try:
                     if field.type() == QVariant.Int:
                         qf.setAttribute(fname, int(val))
@@ -252,26 +218,18 @@ def extract_features_and_create_layer(features: List[Dict], layer_name: str, geo
 
 
 def _geojson_geom_to_wkt(geom_dict: Dict) -> str:
-    """
-    Converte un dizionario geometria GeoJSON in una stringa WKT.
-    Usa QgsGeometry.fromEWkt() indirettamente tramite json→QgsGeometry.
-
-    Nota: QgsGeometry.fromWkt() non accetta GeoJSON direttamente;
-    si usa il percorso JSON→QgsGeometry.asWkt().
-    """
+    """Converte un dizionario geometria GeoJSON in stringa WKT."""
     import json
     from qgis.core import QgsGeometry
     geom = QgsGeometry.fromWkt("")
-    # fromEWkt non esiste in tutte le versioni; usiamo fromWkt con conversione
-    # intermedia tramite il metodo ufficiale asGeometry da stringa JSON
     geom_str = json.dumps(geom_dict)
     return QgsGeometry.fromEWkt(geom_str).asWkt() if False else _json_to_wkt(geom_dict)
 
 
 def _json_to_wkt(geom_dict: Dict) -> str:
     """
-    Converte geometria GeoJSON in WKT manualmente per i tipi usati
-    nel dataset parcheggi (Point, Polygon, MultiPolygon).
+    Converte manualmente geometria GeoJSON in WKT
+    per i tipi Point, Polygon e MultiPolygon.
     """
     gtype = geom_dict["type"]
     coords = geom_dict["coordinates"]
@@ -297,7 +255,7 @@ def _json_to_wkt(geom_dict: Dict) -> str:
         return f"MULTIPOLYGON ({', '.join(polys)})"
 
     else:
-        # Fallback per LineString o altri tipi presenti nel dataset
+        # Fallback per LineString o tipi non gestiti
         flat = ", ".join(f"{c[0]} {c[1]}" for c in coords)
         return f"LINESTRING ({flat})"
 
@@ -311,38 +269,17 @@ def reproject_layer(
     target_crs_code: str = CRS_TARGET,
 ) -> QgsVectorLayer:
     """
-    Riproietta tutte le geometrie di ``source_layer`` nel sistema di
-    riferimento indicato da ``target_crs_code`` e restituisce un nuovo
-    QgsVectorLayer in memoria con il CRS corretto.
-
-    Il layer sorgente deve essere in ``EPSG:4326`` (lat/lon WGS84),
-    come da specifica GeoJSON RFC 7946.  Il target default è
-    ``EPSG:3004`` (Monte Mario / Italy Zone 2), obbligatorio per
-    lavori tecnici sull'Italia centro-orientale (Marche).
-
-    La trasformazione usa il datum shift ufficiale NTv2 se disponibile
-    nell'installazione QGIS/PROJ; in caso contrario PROJ applica il
-    Molodensky standard (errore < 1 m, accettabile per dati OSM).
-
-    :param source_layer:    Layer in memoria in EPSG:4326
-    :param target_crs_code: Codice EPSG di destinazione (default EPSG:3004)
-    :returns:               Nuovo layer in memoria nel CRS di destinazione
-    :raises RuntimeError:   Se la creazione del layer destinazione fallisce
+    Riproietta source_layer (EPSG:4326) nel CRS indicato e
+    restituisce un nuovo layer in memoria con le geometrie trasformate.
     """
     src_crs = QgsCoordinateReferenceSystem(CRS_SOURCE)
     dst_crs = QgsCoordinateReferenceSystem(target_crs_code)
 
-    # Oggetto di trasformazione (usa il contesto del progetto corrente
-    # per applicare eventuali datum shift configurati dall'utente)
     transform = QgsCoordinateTransform(
         src_crs, dst_crs, QgsProject.instance()
     )
 
-    # Determina il tipo geometrico WKB per la URI del nuovo layer
-    geom_type_name = QgsWkbTypes.displayString(
-        source_layer.wkbType()
-    )
-
+    geom_type_name = QgsWkbTypes.displayString(source_layer.wkbType())
     uri = f"{geom_type_name}?crs={target_crs_code}"
     dest_layer = QgsVectorLayer(uri, source_layer.name(), "memory")
 
@@ -352,21 +289,16 @@ def reproject_layer(
             f"in {target_crs_code}."
         )
 
-    # Copia lo schema dei campi sorgente nel layer destinazione
     provider = dest_layer.dataProvider()
     provider.addAttributes(source_layer.fields())
     dest_layer.updateFields()
 
-    # Riproietta e copia ogni feature
     reprojected: List[QgsFeature] = []
     for src_feat in source_layer.getFeatures():
         dst_feat = QgsFeature(dest_layer.fields())
-
-        # Copia attributi invariati
         dst_feat.setAttributes(src_feat.attributes())
 
-        # Riproietta la geometria
-        geom = QgsGeometry(src_feat.geometry())   # copia esplicita
+        geom = QgsGeometry(src_feat.geometry())
         if not geom.isNull():
             geom.transform(transform)
         dst_feat.setGeometry(geom)
@@ -383,6 +315,10 @@ def reproject_layer(
 # ===========================================================================
 
 def apply_fee_symbology(layer: QgsVectorLayer) -> None:
+    """
+    Applica una simbologia rule-based al layer in base all'attributo 'fee'
+    (camper=viola, pagamento=rosso, gratuito=verde, condizionale=arancione, N/D=grigio).
+    """
     is_point = layer.geometryType() == QgsWkbTypes.PointGeometry
 
     def _make_sym(color, border):
@@ -397,10 +333,9 @@ def apply_fee_symbology(layer: QgsVectorLayer) -> None:
                 "width_border": "0.4", "style": "solid",
             })
 
-    # Regola radice (obbligatoria per QgsRuleBasedRenderer)
     root = QgsRuleBasedRenderer.Rule(None)
 
-    # 1. Camper ammessi → viola (priorità massima: ELSE sotto non la tocca)
+    # 1. Camper ammessi → viola (priorità massima)
     r_camper = QgsRuleBasedRenderer.Rule(_make_sym("#9b59b6", "#7d3c98"))
     r_camper.setFilterExpression('"motorhome" = \'yes\'')
     r_camper.setLabel("Camper ammessi")
@@ -436,29 +371,20 @@ def apply_fee_symbology(layer: QgsVectorLayer) -> None:
     layer.setRenderer(QgsRuleBasedRenderer(root))
     layer.triggerRepaint()
 
+
 # ===========================================================================
 # Etichette automatiche
 # ===========================================================================
 
 def apply_name_labels(layer: QgsVectorLayer) -> None:
     """
-    Configura le etichette automatiche usando il campo ``name``.
-
-    Impostazioni:
-      - Testo: nero, grassetto, 9pt
-      - Buffer: bianco semitrasparente per leggibilità su sfondo qualsiasi
-      - Posizionamento: centroide (Over Point / Over Polygon)
-
-    Se il campo ``name`` non esiste nel layer, la funzione ritorna
-    silenziosamente senza applicare alcuna etichetta.
-
-    :param layer: Layer vettoriale (punti o poligoni).
+    Configura le etichette automatiche sul campo 'name' (Arial 9pt grassetto,
+    buffer bianco). Non fa nulla se il campo 'name' è assente nel layer.
     """
     field_names = [f.name() for f in layer.fields()]
     if "name" not in field_names:
         return
 
-    # --- Formato testo ---
     text_format = QgsTextFormat()
     font = QFont("Arial", 9)
     font.setBold(True)
@@ -466,21 +392,17 @@ def apply_name_labels(layer: QgsVectorLayer) -> None:
     text_format.setSize(9)
     text_format.setColor(QColor(0, 0, 0))
 
-    # --- Buffer (alone bianco) ---
     buffer_settings = QgsTextBufferSettings()
     buffer_settings.setEnabled(True)
     buffer_settings.setSize(1.0)
     buffer_settings.setColor(QColor(255, 255, 255, 200))
     text_format.setBuffer(buffer_settings)
 
-    # --- Impostazioni di posizionamento ---
     label_settings = QgsPalLayerSettings()
     label_settings.fieldName = "name"
     label_settings.isExpression = False
     label_settings.enabled = True
     label_settings.setFormat(text_format)
-
-    # Attiva l'etichettatura solo sulle feature con 'name' compilato
     label_settings.drawLabels = True
 
     layer.setLabeling(QgsVectorLayerSimpleLabeling(label_settings))
@@ -492,34 +414,34 @@ def apply_name_labels(layer: QgsVectorLayer) -> None:
 # Funzione di alto livello
 # ===========================================================================
 
-def load_geojson_to_layers(filepath: str,target_crs: str = CRS_TARGET,) -> Tuple[QgsVectorLayer, QgsVectorLayer]:
+def load_geojson_to_layers(
+    filepath: str,
+    target_crs: str = CRS_TARGET,
+) -> Tuple[QgsVectorLayer, QgsVectorLayer]:
     """
-    Carica un file GeoJSON e restituisce
-    due layer in memoria **proiettati in EPSG:3004**, già stilizzati
-    e pronti per essere aggiunti al progetto QGIS.
-
-    :param filepath:   Percorso assoluto al file .geojson
-    :param target_crs: CRS di destinazione (default ``EPSG:3004``)
-    :returns:          Coppia (layer_poligoni, layer_punti) in EPSG:3004
-    :raises:           FileNotFoundError, ValueError, RuntimeError
+    Carica un GeoJSON e restituisce (layer_poligoni, layer_punti) in EPSG:3004,
+    già stilizzati con simbologia fee e etichette nome.
     """
     points_feat, polygons_feat, _ = parse_geojson(filepath)
 
-    # Estrazione delle feature dei parcheggi dal GeoJSON e creazione dei layer temporanei in EPSG:4326
-    _tmp_poly = extract_features_and_create_layer(polygons_feat, layer_name="_tmp_poly", geometry_type="MultiPolygon", crs=CRS_SOURCE,)
-    _tmp_pts = extract_features_and_create_layer(points_feat, layer_name="_tmp_pts", geometry_type="Point", crs=CRS_SOURCE,)
+    # Layer temporanei in EPSG:4326
+    _tmp_poly = extract_features_and_create_layer(
+        polygons_feat, layer_name="_tmp_poly", geometry_type="MultiPolygon", crs=CRS_SOURCE,
+    )
+    _tmp_pts = extract_features_and_create_layer(
+        points_feat, layer_name="_tmp_pts", geometry_type="Point", crs=CRS_SOURCE,
+    )
 
-    # Riproiezione dei layer EPSG:4326 in EPSG:3004
+    # Riproiezione in EPSG:3004
     layer_poly = reproject_layer(_tmp_poly, target_crs)
     layer_poly.setName("Parcheggi – Poligoni")
 
     layer_pts = reproject_layer(_tmp_pts, target_crs)
     layer_pts.setName("Parcheggi – Punti")
 
-    # Rimozione dei due layer temporanei in EPSG:4326
     del _tmp_poly, _tmp_pts
 
-    # Applichiamo ad ogni parcheggio il suo nome e le sue proprietà
+    # Simbologia ed etichette
     apply_fee_symbology(layer_poly)
     apply_name_labels(layer_poly)
 

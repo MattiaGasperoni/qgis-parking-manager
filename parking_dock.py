@@ -2,13 +2,27 @@
 """
 parking_dock.py
 ---------------
-Finestra del plugin, contiene:
-  - Caricamento file GeoJSON e creazione dei layer
-  - Informazioni sui parcheggi caricati
-  - Strumenti per l'aggiunta, la rimozione e il salvataggio di parcheggi
-  - Analisi spaziale tramite selezione rettangolare interattiva sulla mappa
-  - Risultati dell'analisi spaziale
-  - Log del plugin
+Pannello principale (DockWidget) del plugin QGIS "Parking Manager".
+Questo modulo funge da "centro di controllo", gestendo l'interfaccia utente (UI), 
+l'orchestrazione degli strumenti mappa e l'intero ciclo di vita dei dati.
+
+Classi Principali
+-----------------
+  • ParcheggiDock : Classe core del plugin (QgsDockWidget). Coordina i layer in memoria,
+                    costruisce l'interfaccia utente e intercetta i segnali provenienti
+                    dagli strumenti mappa (Map Tools) e dai bottoni.
+  • _ResultCard   : Widget personalizzato per la visualizzazione formattata (a schede)
+                    dei risultati numerici durante l'analisi spaziale.
+
+Flusso Operativo e Sezioni UI
+-----------------------------
+  1. Caricamento File   : Selezione del GeoJSON e creazione dei layer (riproiettati in EPSG:3004).
+  2. Info Parcheggi     : Statistiche globali sui layer caricati (totali, tariffe, camper).
+  3. Editing e Save     : Attivazione strumenti per aggiungere, rimuovere e interrogare i 
+                          parcheggi; salvataggio definitivo su GeoJSON (esportato in EPSG:4326).
+  4. Analisi Spaziale   : Attivazione del tool di selezione rettangolare su mappa.
+  5. Risultati          : Visualizzazione aggregata delle feature ricadenti nell'area selezionata.
+  6. Log del Plugin     : Feedback testuale istantaneo sulle operazioni dell'utente.
 """
 
 import os
